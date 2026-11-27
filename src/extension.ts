@@ -3,7 +3,7 @@ import { PALETTE, ColorId, RangeStore, MarkedRange } from './core/ranges';
 import { Conversation, Turn } from './core/chat';
 import { extractText, fileKind } from './core/extract';
 import { Language, EnglishLevel, findLanguage, LANGUAGES, buildTranslateRequest, parseTranslateResponse, looksPoor, translateKeepingCode, englishCafeSystem, parseCafeReply } from './core/translate';
-import { Stage, STAGES, learningInstruction, checkFetchUrl, htmlToText, projectDir, slugify } from './core/project';
+import { Stage, STAGES, learningInstruction, checkFetchUrl, htmlToText, projectDir, slugify, importHeader } from './core/project';
 import { redact as redactSecrets } from './core/redact';
 import { ACTIONS, ActionId, extractCodeBlock, replaceLines } from './core/actions';
 import { buildPrompt } from './core/prompt';
@@ -403,7 +403,7 @@ if (fileKind(f.path) === 'unsupported') {      vscode.window.showWarningMessage(
   }
   const srcDir = vscode.Uri.joinPath(wsRoot()!, projectDir(name), 'source');
   const n = (await vscode.workspace.fs.readDirectory(srcDir).then((x) => x.length, () => 0)) + 1;
-  const uri = await writeProjectFile(name, `source/${String(n).padStart(2, '0')}-${label}.md`, text);
+  const uri = await writeProjectFile(name, `source/${String(n).padStart(2, '0')}-${label}.md`, importHeader(text, label) + text);
   await ctx.workspaceState.update('maidCafe.project', slugify(name));
   vscode.window.showInformationMessage(`Imported into ${vscode.workspace.asRelativePath(uri)}`);
   return uri.toString();

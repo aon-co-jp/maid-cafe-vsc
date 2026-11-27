@@ -151,3 +151,13 @@ test('every %key% in package.json exists in the English and Japanese nls files; 
   for (const s of JSON.parse(pkg).contributes.walkthroughs[0].steps) assert.ok(fs.existsSync(path.join(root, s.media.markdown)));
   for (const c of JSON.parse(pkg).contributes.commands) assert.ok(c.title.startsWith('%'), c.command);
 });
+
+test('engagement type (freelance / dispatch / employee) is guessed from job text', () => {
+  const P = require('../out/core/project');
+  assert.deepStrictEqual(P.classifyEngagement('業務委託・リモート可 単価70万'), ['freelance']);
+  assert.deepStrictEqual(P.classifyEngagement('紹介予定派遣のお仕事'), ['dispatch']);
+  assert.deepStrictEqual(P.classifyEngagement('正社員募集(中途採用)'), ['employee']);
+  assert.deepStrictEqual(P.classifyEngagement('Full-time employee or freelance contractor'), ['freelance', 'employee']);
+  assert.deepStrictEqual(P.classifyEngagement('Rust engineer'), []);
+  assert.ok(P.importHeader('派遣', 'url').includes('engagement=dispatch'));
+});

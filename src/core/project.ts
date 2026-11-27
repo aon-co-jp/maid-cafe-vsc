@@ -98,3 +98,19 @@ export function learningInstruction(stage: Stage, on: boolean): string {
 export function projectDir(name: string): string {
   return `.maid-cafe/projects/${slugify(name)}`;
 }
+
+/** 雇用形態(フリーランス・派遣・社員)。本文の語から推定する。複数当たれば全部返す。 / Engagement types guessed from the text. */
+export type Engagement = 'freelance' | 'dispatch' | 'employee';
+const ENGAGEMENT_WORDS: Record<Engagement, RegExp> = {
+  freelance: /フリーランス|業務委託|準委任|請負|個人事業|freelanc|contractor|contract work|SES/i,
+  dispatch: /派遣|紹介予定派遣|temp(?:orary)? staff|staffing agency|dispatch/i,
+  employee: /正社員|社員募集|契約社員|中途採用|新卒|full[- ]?time|permanent|employee|正規雇用/i,
+};
+export function classifyEngagement(text: string): Engagement[] {
+  return (Object.keys(ENGAGEMENT_WORDS) as Engagement[]).filter((k) => ENGAGEMENT_WORDS[k].test(text));
+}
+/** 取り込んだ資料の先頭に付ける見出し(雇用形態と取り込み元)。 */
+export function importHeader(text: string, source: string): string {
+  const e = classifyEngagement(text);
+  return `<!-- maid-cafe import: source=${source}; engagement=${e.length ? e.join(',') : 'unknown'} -->\n`;
+}

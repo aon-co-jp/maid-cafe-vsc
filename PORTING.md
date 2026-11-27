@@ -68,3 +68,13 @@ Purpose, rules and open items as above: pure logic lives in `src/core/`; no new 
 ### English
 - Bumped to 0.2.0 and built the .vsix with `@vscode/vsce package` (about 10 MB, SHA-256 `50c7a61b…49b0`); verified PDF/docx reading from the unpacked package. Placed in `/var/www/maid-cafe-download/vsc/` on conoha; the old 0.1.0 and old index.html moved to `vsc-backup/`. The downloaded hash matches. The intro page now says 0.2.0. No GitHub Release yet (public action; waiting for the user's confirmation).
 - Real translation measurement was not possible (no torch conversion environment); recorded as unmeasured.
+
+## 2026-11-27(6) 雇用形態の推定・URLの再確認 / Engagement type, URL recheck
+### 日本語
+- 取り込んだ案件資料の先頭に、雇用形態(フリーランス・派遣・社員、本文の語から推定、複数可・不明は unknown)と取り込み元を記録する見出しを付けるようにした(`core/project.ts` の `classifyEngagement`/`importHeader`)。単体13件・実VS Code5件が成功。
+- URL再確認(2026-11-27): `https://audiocafe.tokyo/aruaru` は200「aruaru | ITエンジニア案件・求人マッチング」、依頼の `/arurau` は200だが全体共通の言語選択ページ。正しいURLは `/aruaru`(設定済み)。
+- 4機能(第3言語つき英会話と翻訳=版なし Connect `aruaru_llm.Llm/Translate`、arurau紹介、案件の取り込み、学びながら設計→開発→DEBUG)は既に実装済みで、今回は実VS Code試験で動作を再確認した。**未確認**: 公開 aruaru-llm への実呼び出しと翻訳品質、各社の実API。
+### English
+- Imported job material now starts with a header recording the engagement type (freelance / dispatch / employee, guessed from the text, several allowed, otherwise unknown) and the source (`classifyEngagement` / `importHeader` in `core/project.ts`). 13 unit and 5 real VS Code tests pass.
+- URL recheck (2026-11-27): `https://audiocafe.tokyo/aruaru` returns 200 with the job-matching title; the requested `/arurau` returns 200 but is the site-wide language picker. The correct URL `/aruaru` is configured.
+- All four features (third-language English chat and translation via versionless Connect `aruaru_llm.Llm/Translate`, the arurau intro, job import, learn-while-you-design/build/debug) already existed; this round re-verified them in real VS Code. **Unverified**: live calls to a public aruaru-llm and translation quality, real provider APIs.
