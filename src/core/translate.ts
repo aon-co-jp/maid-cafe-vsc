@@ -114,7 +114,11 @@ export function buildTranslateRequest(a: TranslateArgs): Req {
 }
 
 export function parseTranslateResponse(provider: ProviderId, j: any): string | null {
-  if (provider === 'aruaru') return typeof j?.translation === 'string' ? j.translation : null;
+  if (provider === 'aruaru') {
+    // 翻訳ワーカー(M2M100)が無いサーバーは GPT-2 で代用し、訳にならない(2026-11-27 実測)。訳として扱わず、鍵のある AI へ回す。
+    if (typeof j?.engine === 'string' && /gpt2/i.test(j.engine)) return null;
+    return typeof j?.translation === 'string' ? j.translation : null;
+  }
   return parseResponse(provider, j);
 }
 

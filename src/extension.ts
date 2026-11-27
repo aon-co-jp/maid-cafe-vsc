@@ -112,7 +112,7 @@ async function ask(ctx: vscode.ExtensionContext, ranges: MarkedRange[], question
       const res = await fetch(req.url, { method: 'POST', headers: req.headers, body: req.body });
       const text = await res.text();
       if (!res.ok) {
-        vscode.window.showErrorMessage(explainError(res.status, text));
+        vscode.window.showErrorMessage(explainError(res.status, text, provider));
         return undefined;
       }
       const ans = parseResponse(provider, JSON.parse(text));
@@ -214,7 +214,7 @@ async function callProvider(ctx: vscode.ExtensionContext, provider: ProviderId, 
     const res = await fetch(req.url, { method: 'POST', headers: req.headers, body: req.body, signal: AbortSignal.timeout(60000) });
     const text = await res.text();
     if (!res.ok) {
-      vscode.window.showErrorMessage(explainError(res.status, text));
+      vscode.window.showErrorMessage(explainError(res.status, text, provider));
       return undefined;
     }
     return parseResponse(provider, JSON.parse(text)) ?? undefined;
@@ -240,7 +240,10 @@ async function translateOne(ctx: vscode.ExtensionContext, text: string, target: 
     const req = buildTranslateRequest({ provider: p, key, model: models[p], aruaruUrl: cfg().get('aruaruUrl'), text, target });
     try {
       const res = await fetch(req.url, { method: 'POST', headers: req.headers, body: req.body, signal: AbortSignal.timeout(60000) });
-      if (!res.ok) return undefined;
+      if (!res.ok) {
+        if (p === 'aruaru' && res.status === 404 && !fallbackProvider()) vscode.window.showWarningMessage(explainError(404, '', 'aruaru'));
+        return undefined;
+      }
       return parseTranslateResponse(p, await res.json()) ?? undefined;
     } catch {
       return undefined;

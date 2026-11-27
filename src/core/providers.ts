@@ -92,8 +92,11 @@ export function parseResponse(provider: ProviderId, j: any): string | null {
 }
 
 /** エラー応答から、利用者向けの短い説明を作る(鍵は含めない)。 */
-export function explainError(status: number, body: string): string {
+export function explainError(status: number, body: string, provider?: ProviderId): string {
   const head = body.replace(/\s+/g, ' ').slice(0, 200);
+  // 2026-11-27 実測: 既定の https://maid-cafe.tokyo は aruaru-llm を公開しておらず、版なし Connect は 404 になる。
+  if (provider === 'aruaru' && status === 404)
+    return 'The free AI server URL (maidCafe.aruaruUrl) does not expose aruaru-llm (404). Set maidCafe.aruaruUrl to a server that serves /aruaru_llm.Llm/*, or switch to Claude/Gemini/OpenAI with your own key.';
   if (status === 401 || status === 403) return `Authentication failed (${status}). Check the API key.`;
   if (status === 429) return 'Rate limit or quota reached (429). Wait, or switch provider.';
   if (status >= 500) return `The provider had a problem (${status}). Try again later.`;

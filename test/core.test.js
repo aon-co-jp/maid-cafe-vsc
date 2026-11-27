@@ -60,6 +60,7 @@ test('response parsing and error text', () => {
   assert.strictEqual(parseResponse('openai', {}), null);
   assert.ok(explainError(401, 'x').includes('API key'));
   assert.ok(explainError(429, 'x').includes('429'));
+  assert.ok(explainError(404, 'x', 'aruaru').includes('aruaruUrl'));
 });
 
 const { Conversation, flattenTurns } = require('../out/core/chat');
@@ -118,6 +119,7 @@ test('translate: languages, code-preserving split, request shapes, poor-output c
   const free = T.buildTranslateRequest({ provider: 'aruaru', text: 'hi', target: fr });
   assert.ok(free.url.endsWith('/aruaru_llm.Llm/Translate') && JSON.parse(free.body).target_lang === 'fr');
   assert.strictEqual(T.parseTranslateResponse('aruaru', { translation: 'salut' }), 'salut');
+  assert.strictEqual(T.parseTranslateResponse('aruaru', { translation: 'junk', engine: 'gpt2-greedy-decode-v0' }), null);
   const paid = T.buildTranslateRequest({ provider: 'claude', key: 'K', text: 'hi', target: fr });
   assert.ok(JSON.parse(paid.body).system.includes('native speaker') && paid.url.includes('anthropic'));
   assert.ok(T.looksPoor('Hello world this is a test', '', fr) && T.looksPoor('Hello world this is a test', 'Hello world this is a test', fr));
