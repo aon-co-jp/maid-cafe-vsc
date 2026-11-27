@@ -69,6 +69,18 @@
       {
         "command": "maidCafe.openSchool",
         "title": "Maid Cafe: Open the programming school"
+      },
+      {
+        "command": "maidCafe.openArurau",
+        "title": "Maid Cafe: Open audiocafe.tokyo arurau (IT job / project matching)"
+      },
+      {
+        "command": "maidCafe.project.import",
+        "title": "Maid Cafe: Import job / project information (URL, text, md/txt file)"
+      },
+      {
+        "command": "maidCafe.project.step",
+        "title": "Maid Cafe: Project step (requirements, design, tasks, code, review, debug)"
       }
     ],
     "menus": {
@@ -101,6 +113,13 @@
         {
           "command": "maidCafe.askAboutColor",
           "group": "maidCafe@6"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "maidCafe.project.import",
+          "when": "resourceExtname =~ /\\.(md|markdown|txt)$/",
+          "group": "maidCafe@1"
         }
       ]
     },
@@ -156,6 +175,21 @@
           "type": "number",
           "default": 12000,
           "description": "Maximum characters of code sent per request."
+        },
+        "maidCafe.arurauPageUrl": {
+          "type": "string",
+          "default": "https://audiocafe.tokyo/aruaru",
+          "description": "arurau on audiocafe.tokyo: an IT engineer job / project matching page (freelance, dispatch, employee). Opened by the command 'Maid Cafe: Open audiocafe.tokyo arurau'."
+        },
+        "maidCafe.redactPersonal": {
+          "type": "boolean",
+          "default": true,
+          "description": "Mask names, contact details and pay/rates in imported job/project material before it is sent to an AI."
+        },
+        "maidCafe.learningMode": {
+          "type": "boolean",
+          "default": true,
+          "description": "Learning mode: each project step also explains briefly why it is done that way."
         }
       }
     }

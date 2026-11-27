@@ -88,3 +88,19 @@ test('extractCodeBlock and replaceLines (stale proposals are refused)', () => {
   assert.strictEqual(replaceLines(t, 2, 3, 'B\nC', 'b\nc'), 'a\r\nB\r\nC\r\nd');
   assert.strictEqual(replaceLines(t, 2, 3, 'B', 'changed'), null);
 });
+
+const { redactPersonal, slugify, checkFetchUrl, htmlToText, learningInstruction, projectDir } = require('../out/core/project');
+
+test('personal info is masked, urls are checked, html is flattened', () => {
+  const t = '氏名: 山田太郎\nメール yamada@example.com 電話 03-1234-5678\n単価: 80万円/月\n〒123-4567\nPython';
+  const r = redactPersonal(t);
+  for (const x of ['山田太郎', 'yamada@example.com', '03-1234-5678', '80万円', '123-4567']) assert.ok(!r.includes(x), x);
+  assert.ok(r.includes('Python'));
+  assert.strictEqual(checkFetchUrl('ftp://x/').ok, false);
+  assert.strictEqual(checkFetchUrl('https://a:b@x.com/').ok, false);
+  assert.strictEqual(checkFetchUrl('https://x.com/a').ok, true);
+  assert.strictEqual(htmlToText('<style>a{}</style><p>Hi &amp; bye</p><script>1</script>'), 'Hi & bye');
+  assert.strictEqual(slugify('../My Job:1'), 'My-Job-1');
+  assert.strictEqual(projectDir('A b'), '.maid-cafe/projects/A-b');
+  assert.ok(learningInstruction('debug', true).includes('Why') && learningInstruction('debug', false) === '');
+});

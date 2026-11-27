@@ -1,6 +1,8 @@
 import * as vscode from 'vscode';
 import { PALETTE, ColorId, RangeStore, MarkedRange } from './core/ranges';
 import { Conversation } from './core/chat';
+import { Stage, STAGES, learningInstruction, checkFetchUrl, htmlToText, projectDir, slugify } from './core/project';
+import { redact as redactSecrets } from './core/redact';
 import { ACTIONS, ActionId, extractCodeBlock, replaceLines } from './core/actions';
 import { buildPrompt } from './core/prompt';
 import { PROVIDERS, ProviderId, buildRequest, parseResponse, explainError } from './core/providers';
@@ -75,7 +77,12 @@ function showConversation(title: string): void {
 }
 
 /** 質問を送って答えを返す(失敗時は undefined)。続きの質問は conversation に積む。 */
-async function ask(ctx: vscode.ExtensionContext, ranges: MarkedRange[], questionArg?: string, followUp = false): Promise<string | undefined> {
+interface AskOpts {
+  extraSystem?: string;
+  personal?: boolean;
+}
+
+async function ask(ctx: vscode.ExtensionContext, ranges: MarkedRange[], questionArg?: string, followUp = false, opts: AskOpts = {}): Promise<string | undefined> {
   if (!ranges.length) {
     vscode.window.showInformationMessage('No code is marked. Select code and run "Maid Cafe: Mark selection with a colour" first.');
     return undefined;
@@ -85,7 +92,7 @@ async function ask(ctx: vscode.ExtensionContext, ranges: MarkedRange[], question
   const provider = cfg().get<ProviderId>('provider', 'aruaru');
   const key = await getKey(ctx, provider);
   if (key === undefined || (PROVIDERS.find((p) => p.id === provider)!.needsKey && !key)) return undefined;
-  const bp = buildPrompt({ question, ranges, redactSecrets: cfg().get('redactSecrets', true), maxChars: cfg().get('maxContextChars', 12000), language: vscode.env.language });
+  const bp = buildPrompt({ question, ranges, redactSecrets: cfg().get('redactSecrets', true), maxChars: cfg().get('maxContextChars', 12000), language: vscode.env.language, redactPersonal: opts.personal ?? false, extraSystem: opts.extraSystem });
   if (cfg().get('confirmBeforeSend', true)) {
     const ok = await vscode.window.showWarningMessage(`Send ${bp.sentChars} characters of code to ${provider}${bp.truncated ? ' (truncated)' : ''}?`, { modal: true }, 'Send');
     if (ok !== 'Send') return undefined;
@@ -171,6 +178,180 @@ async function runAction(ctx: vscode.ExtensionContext, id: ActionId, autoApply =
   return ans;
 }
 
+// ---- 案件の取り込みと 設計→開発→DEBUG ----
+const ARURAU_URL = 'https://audiocafe.tokyo/aruaru';
+
+function wsRoot(): vscode.Uri | undefined {
+  return vscode.workspace.workspaceFolders?.[0]?.uri;
+}
+const enc = new TextEncoder();
+const dec = new TextDecoder();
+
+async function writeProjectFile(name: string, rel: string, text: string): Promise<vscode.Uri> {
+  const root = wsRoot();
+  if (!root) throw new Error('Open a folder first (projects are saved in .maid-cafe/projects/ inside the workspace).');
+  const uri = vscode.Uri.joinPath(root, projectDir(name), rel);
+  await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(uri, '..'));
+  await vscode.workspace.fs.writeFile(uri, enc.encode(text));
+  return uri;
+}
+
+async function readIfExists(uri: vscode.Uri): Promise<string | undefined> {
+  try {
+    return dec.decode(await vscode.workspace.fs.readFile(uri));
+  } catch {
+    return undefined;
+  }
+}
+
+/** 利用者が貼った URL を、確認のあと 1 回だけ GET する(ログインや連打はしない)。 */
+async function fetchOnce(raw: string, confirm: boolean): Promise<string | undefined> {
+  const c = checkFetchUrl(raw);
+  if (!c.ok) {
+    vscode.window.showWarningMessage(c.reason);
+    return undefined;
+  }
+  if (confirm) {
+    const ok = await vscode.window.showWarningMessage(`Fetch this page once (GET, no login, no cookies)?\n${c.url}`, { modal: true }, 'Fetch');
+    if (ok !== 'Fetch') return undefined;
+  }
+  const res = await fetch(c.url, { redirect: 'follow', signal: AbortSignal.timeout(15000), headers: { 'user-agent': 'maid-cafe-vsc (user-requested single fetch)' } });
+  if (res.status === 401 || res.status === 403) {
+    vscode.window.showWarningMessage(`The page needs a login (${res.status}); it was not fetched. Copy the text and use "Paste text" instead.`);
+    return undefined;
+  }
+  if (!res.ok) {
+    vscode.window.showWarningMessage(`Fetch failed (${res.status}).`);
+    return undefined;
+  }
+  const type = res.headers.get('content-type') ?? '';
+  if (!/text\/|json|xml/.test(type)) {
+    vscode.window.showWarningMessage(`Unsupported content type (${type || 'unknown'}); only text/HTML pages are read.`);
+    return undefined;
+  }
+  const body = (await res.text()).slice(0, 1_000_000);
+  return /html/.test(type) ? htmlToText(body) : body;
+}
+
+async function currentProject(ctx: vscode.ExtensionContext): Promise<string | undefined> {
+  return ctx.workspaceState.get<string>('maidCafe.project');
+}
+
+interface ImportArgs {
+  name?: string;
+  kind?: 'url' | 'text' | 'file';
+  value?: string | vscode.Uri;
+  noConfirm?: boolean;
+}
+
+async function importMaterial(ctx: vscode.ExtensionContext, a: ImportArgs = {}): Promise<string | undefined> {
+  if (!wsRoot()) {
+    vscode.window.showWarningMessage('Open a folder first.');
+    return undefined;
+  }
+  const kind =
+    a.kind ??
+    (
+      await vscode.window.showQuickPick(
+        [
+          { label: 'Paste a URL', id: 'url' as const, description: 'fetched once after you confirm' },
+          { label: 'Paste text (from the clipboard)', id: 'text' as const },
+          { label: 'Choose a file (md / txt)', id: 'file' as const, description: 'pdf / docx: not supported yet' },
+        ],
+        { placeHolder: 'Import job / project information' },
+      )
+    )?.id;
+  if (!kind) return undefined;
+  const name = a.name ?? (await vscode.window.showInputBox({ prompt: 'Project name (folder under .maid-cafe/projects/)', value: (await currentProject(ctx)) ?? '', ignoreFocusOut: true }));
+  if (!name) return undefined;
+  let text: string | undefined;
+  let label: string = kind;
+  if (kind === 'url') {
+    const u = typeof a.value === 'string' ? a.value : await vscode.window.showInputBox({ prompt: 'URL of the job/project page (you paste it; it is fetched once)', ignoreFocusOut: true });
+    if (!u) return undefined;
+    text = await fetchOnce(u, !a.noConfirm);
+  } else if (kind === 'text') {
+    text = typeof a.value === 'string' ? a.value : await vscode.env.clipboard.readText();
+  } else {
+    let f: vscode.Uri | undefined = a.value instanceof vscode.Uri ? a.value : undefined;
+    f ??= (await vscode.window.showOpenDialog({ canSelectMany: false, filters: { 'Text / Markdown': ['md', 'txt', 'markdown'] } }))?.[0];
+    if (!f) return undefined;
+    if (!/\.(md|markdown|txt)$/i.test(f.path)) {
+      vscode.window.showWarningMessage('Only .md / .txt can be imported for now (pdf and docx are not supported yet).');
+      return undefined;
+    }
+    text = dec.decode(await vscode.workspace.fs.readFile(f));
+  }
+  if (!text || !text.trim()) {
+    vscode.window.showWarningMessage('Nothing to import.');
+    return undefined;
+  }
+  const srcDir = vscode.Uri.joinPath(wsRoot()!, projectDir(name), 'source');
+  const n = (await vscode.workspace.fs.readDirectory(srcDir).then((x) => x.length, () => 0)) + 1;
+  const uri = await writeProjectFile(name, `source/${String(n).padStart(2, '0')}-${label}.md`, text);
+  await ctx.workspaceState.update('maidCafe.project', slugify(name));
+  vscode.window.showInformationMessage(`Imported into ${vscode.workspace.asRelativePath(uri)}`);
+  return uri.toString();
+}
+
+/** 案件の資料と、これまでの成果物(要件・設計・タスク)を範囲の形にそろえる。 */
+async function projectContext(name: string): Promise<MarkedRange[]> {
+  const dir = vscode.Uri.joinPath(wsRoot()!, projectDir(name));
+  const out: MarkedRange[] = [];
+  let id = 1;
+  const add = (file: string, text: string) => out.push({ id: id++, color: 'blue', file, startLine: 1, endLine: Math.max(1, text.split('\n').length), text });
+  for (const f of ['requirements.md', 'design.md', 'tasks.md']) {
+    const t = await readIfExists(vscode.Uri.joinPath(dir, f));
+    if (t) add(`${projectDir(name)}/${f}`, t);
+  }
+  const src = await vscode.workspace.fs.readDirectory(vscode.Uri.joinPath(dir, 'source')).then((x) => x.map((e) => e[0]).sort(), () => [] as string[]);
+  for (const f of src) add(`${projectDir(name)}/source/${f}`, dec.decode(await vscode.workspace.fs.readFile(vscode.Uri.joinPath(dir, 'source', f))));
+  return out;
+}
+
+interface StageArgs {
+  stage?: Stage;
+  input?: string; // 実装したい内容 / 貼り付けるエラー・ログ
+  autoApply?: boolean;
+}
+
+async function runStage(ctx: vscode.ExtensionContext, a: StageArgs = {}): Promise<unknown> {
+  const name = await currentProject(ctx);
+  if (!name) {
+    vscode.window.showInformationMessage('Import job/project information first ("Maid Cafe: Import job / project information").');
+    return undefined;
+  }
+  const stage = a.stage ?? (await vscode.window.showQuickPick(Object.entries(STAGES).map(([id, st]) => ({ label: st.label, id: id as Stage })), { placeHolder: 'Which step?' }))?.id;
+  if (!stage) return undefined;
+  const s = STAGES[stage];
+  let input = a.input;
+  const ed = vscode.window.activeTextEditor;
+  let target: { range: MarkedRange; uri: vscode.Uri } | undefined;
+  const code: MarkedRange[] = [];
+  if (ed && !ed.selection.isEmpty && (stage === 'implement' || stage === 'review' || stage === 'debug')) {
+    target = wholeLineSelection(ed);
+    code.push(target.range);
+  }
+  code.push(...store.all().slice(0, 5)); // 色つき範囲も文脈に加える
+  if (stage === 'implement' || stage === 'debug') {
+    input ??= await vscode.window.showInputBox({ prompt: stage === 'debug' ? 'Paste the error or log' : 'What should be implemented? (a task from tasks.md)', ignoreFocusOut: true });
+    if (!input) return undefined;
+  }
+  const question = input ? `${s.ask}\n\nUser input:\n${cfg().get('redactSecrets', true) ? redactSecrets(input) : input}` : s.ask;
+  const ans = await ask(ctx, [...code, ...(await projectContext(name))], question, false, {
+    personal: cfg().get('redactPersonal', true),
+    extraSystem: learningInstruction(stage, cfg().get('learningMode', true)),
+  });
+  if (ans === undefined) return undefined;
+  if (s.file) {
+    const uri = await writeProjectFile(name, s.file, ans);
+    await vscode.window.showTextDocument(uri, { preview: false, viewColumn: vscode.ViewColumn.Beside });
+    return uri.toString();
+  }
+  if (target && (stage === 'implement' || stage === 'debug')) return proposeFix(target.uri, target.range.startLine, target.range.endLine, target.range.text, ans, a.autoApply ?? false);
+  return ans;
+}
+
 export function activate(ctx: vscode.ExtensionContext): { store: RangeStore; lastAnswer: () => string | undefined } {
   ctx.subscriptions.push(
     vscode.workspace.registerTextDocumentContentProvider(SCHEME, { provideTextDocumentContent: (u) => proposals.get(u.query) ?? '' }),
@@ -203,6 +384,9 @@ export function activate(ctx: vscode.ExtensionContext): { store: RangeStore; las
     vscode.commands.registerCommand('maidCafe.explain', async () => runAction(ctx, 'explain')),
     vscode.commands.registerCommand('maidCafe.fix', async (opts?: { autoApply?: boolean }) => runAction(ctx, 'fix', opts?.autoApply ?? false)),
     vscode.commands.registerCommand('maidCafe.writeTests', async () => runAction(ctx, 'test')),
+    vscode.commands.registerCommand('maidCafe.openArurau', () => vscode.env.openExternal(vscode.Uri.parse(cfg().get<string>('arurauPageUrl', ARURAU_URL)))),
+    vscode.commands.registerCommand('maidCafe.project.import', (a?: ImportArgs | vscode.Uri) => importMaterial(ctx, a instanceof vscode.Uri ? { kind: 'file', value: a } : a)),
+    vscode.commands.registerCommand('maidCafe.project.step', (a?: StageArgs) => runStage(ctx, a)),
     vscode.commands.registerCommand('maidCafe.clearColors', () => {
       store.clear();
       repaint(vscode.window.activeTextEditor);

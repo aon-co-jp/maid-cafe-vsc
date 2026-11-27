@@ -10,13 +10,19 @@ suite('maid-cafe-vsc in real VS Code', () => {
   suiteSetup(async () => {
     // 疑似 aruaru-llm(Connect 形式、応答は {completion,...})。外には出ない。
     server = http.createServer((req, res) => {
+      if (req.method === 'GET' && req.url === '/job') {
+        res.setHeader('content-type', 'text/html; charset=utf-8');
+        return res.end('<html><script>x=1</script><body><h1>Backend engineer</h1><p>単価: 80万円 / 月</p><p>担当: 山田太郎 yamada@example.com 03-1234-5678</p><p>Python, FastAPI</p></body></html>');
+      }
       let b = '';
       req.on('data', (c) => (b += c));
       req.on('end', () => {
         received.push({ url: req.url, body: JSON.parse(b) });
         const fixed = 'Fixed the operator.\n```js\nfunction add(a, b) {\n  return a + b;\n}\n```';
         res.setHeader('content-type', 'application/json');
-        res.end(JSON.stringify({ completion: received.length === 2 ? 'follow-up ok' : fixed, engine: 'mock', disclosure: 'mock' }));
+        const prompt = received[received.length - 1].body.prompt;
+        const completion = prompt.includes('And now?') ? 'follow-up ok' : prompt.includes('Organize the imported') ? '# Requirements\n- Python API\n\nWhy: unknowns first.' : fixed;
+        res.end(JSON.stringify({ completion, engine: 'mock', disclosure: 'mock' }));
       });
     });
     await new Promise((r) => server.listen(0, '127.0.0.1', r));
@@ -31,6 +37,7 @@ suite('maid-cafe-vsc in real VS Code', () => {
   test('commands are registered', async () => {
     const all = await vscode.commands.getCommands(true);
     for (const c of ['paintSelection', 'askAboutColor', 'askSelection', 'followUp', 'explain', 'fix', 'writeTests']) assert.ok(all.includes(`maidCafe.${c}`), c);
+    for (const c of ['openArurau', 'project.import', 'project.step']) assert.ok(all.includes(`maidCafe.${c}`), c);
   });
 
   test('paint -> ask -> follow-up -> fix with diff apply', async () => {
@@ -62,5 +69,50 @@ suite('maid-cafe-vsc in real VS Code', () => {
       await vscode.workspace.applyEdit(e);
       await doc.save();
     }
+  });
+
+  test('import (url once, text, md file) -> requirements -> debug fix; personal info is masked', async () => {
+    const root = path.resolve(__dirname, '../fixture');
+    await vscode.commands.executeCommand('maidCafe.project.import', { name: 'Demo Job', kind: 'url', value: `http://127.0.0.1:${port}/job`, noConfirm: true });
+    await vscode.commands.executeCommand('maidCafe.project.import', { name: 'Demo Job', kind: 'text', value: 'Remote OK, 3 days a week' });
+    await vscode.commands.executeCommand('maidCafe.project.import', { name: 'Demo Job', kind: 'file', value: vscode.Uri.file(path.resolve(root, 'brief.md')) });
+    const fs = require('node:fs');
+    const src = path.join(root, '.maid-cafe/projects/Demo-Job/source');
+    assert.deepStrictEqual(fs.readdirSync(src), ['01-url.md', '02-text.md', '03-file.md']);
+    assert.ok(fs.readFileSync(path.join(src, '01-url.md'), 'utf8').includes('Backend engineer'), 'html is converted to text');
+    assert.ok(!fs.readFileSync(path.join(src, '01-url.md'), 'utf8').includes('x=1'), 'script removed');
+
+    const before = received.length;
+    const uri = await vscode.commands.executeCommand('maidCafe.project.step', { stage: 'requirements' });
+    assert.ok(uri.endsWith('requirements.md'));
+    const sent = received[before].body.prompt;
+    assert.ok(sent.includes('Backend engineer') && sent.includes('Python, FastAPI'));
+    assert.ok(!sent.includes('yamada@example.com') && !sent.includes('03-1234-5678') && !sent.includes('80万円') && !sent.includes('山田太郎'), 'personal info masked: ' + sent);
+    assert.ok(sent.includes('LEARNING MODE'), 'learning mode asks for Why');
+    assert.ok(fs.readFileSync(path.join(root, '.maid-cafe/projects/Demo-Job/requirements.md'), 'utf8').includes('Why:'));
+
+    const file = vscode.Uri.file(path.resolve(root, 'sample.js'));
+    const doc = await vscode.workspace.openTextDocument(file);
+    const ed = await vscode.window.showTextDocument(doc);
+    ed.selection = new vscode.Selection(0, 0, 2, 1);
+    const original = doc.getText();
+    try {
+      const r = await vscode.commands.executeCommand('maidCafe.project.step', { stage: 'debug', input: 'add(1,2) returned -1, expected 3. key=sk-abcdefghijklmnop1234', autoApply: true });
+      assert.strictEqual(r, 'applied');
+      assert.ok(doc.getText().includes('return a + b;'));
+      const last = received[received.length - 1].body.prompt;
+      assert.ok(last.includes('returned -1') && !last.includes('sk-abcdefghijklmnop1234'), 'pasted log is secret-masked');
+    } finally {
+      const e = new vscode.WorkspaceEdit();
+      e.replace(file, new vscode.Range(0, 0, doc.lineCount, 0), original);
+      await vscode.workspace.applyEdit(e);
+      await doc.save();
+    }
+  });
+
+  test('url import refuses non-http and credentials', async () => {
+    const { checkFetchUrl } = require('../../../out/core/project');
+    assert.strictEqual(checkFetchUrl('file:///etc/passwd').ok, false);
+    assert.strictEqual(checkFetchUrl('https://u:p@example.com/').ok, false);
   });
 });

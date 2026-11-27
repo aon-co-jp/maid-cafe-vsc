@@ -11,5 +11,8 @@ const { runTests } = require('@vscode/test-electron');
   } catch (e) {
     console.error('VS Code test failed:', e);
     process.exit(1);
+  } finally {
+    // 試験が作った案件フォルダを片づける(VS Code 終了後)。
+    require('node:fs').rmSync(path.resolve(__dirname, 'fixture/.maid-cafe'), { recursive: true, force: true });
   }
 })();
