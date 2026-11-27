@@ -2,10 +2,12 @@ const assert = require('node:assert');
 const http = require('node:http');
 const path = require('node:path');
 const vscode = require('vscode');
+const FIX = process.env.MAID_FIXTURE;
 
 suite('maid-cafe-vsc in real VS Code', () => {
   let server;
   const received = [];
+  const translated = [];
   let port;
   suiteSetup(async () => {
     // 疑似 aruaru-llm(Connect 形式、応答は {completion,...})。外には出ない。
@@ -17,11 +19,17 @@ suite('maid-cafe-vsc in real VS Code', () => {
       let b = '';
       req.on('data', (c) => (b += c));
       req.on('end', () => {
-        received.push({ url: req.url, body: JSON.parse(b) });
+        const body = JSON.parse(b);
+        if (req.url === '/aruaru_llm.Llm/Translate') {
+          translated.push(body);
+          res.setHeader('content-type', 'application/json');
+          return res.end(JSON.stringify({ translation: `[${body.target_lang}] ${body.text}`, engine: 'mock-m2m100', disclosure: 'mock' }));
+        }
+        received.push({ url: req.url, body });
         const fixed = 'Fixed the operator.\n```js\nfunction add(a, b) {\n  return a + b;\n}\n```';
         res.setHeader('content-type', 'application/json');
         const prompt = received[received.length - 1].body.prompt;
-        const completion = prompt.includes('And now?') ? 'follow-up ok' : prompt.includes('Organize the imported') ? '# Requirements\n- Python API\n\nWhy: unknowns first.' : fixed;
+        const completion = prompt.includes('maid at a cozy maid cafe') ? 'Maid: Welcome back, Master! What would you like to drink?\nCorrection: Say "I want tea" (not "I wants tea").\n日本語: おかえりなさいませ、ご主人様!' : prompt.includes('And now?') ? 'follow-up ok' : prompt.includes('Organize the imported') ? '# Requirements\n- Python API\n\nWhy: unknowns first.' : fixed;
         res.end(JSON.stringify({ completion, engine: 'mock', disclosure: 'mock' }));
       });
     });
@@ -41,7 +49,7 @@ suite('maid-cafe-vsc in real VS Code', () => {
   });
 
   test('paint -> ask -> follow-up -> fix with diff apply', async () => {
-    const file = vscode.Uri.file(path.resolve(__dirname, '../fixture/sample.js'));
+    const file = vscode.Uri.file(path.join(FIX, 'sample.js'));
     const doc = await vscode.workspace.openTextDocument(file);
     const ed = await vscode.window.showTextDocument(doc);
     ed.selection = new vscode.Selection(0, 0, 2, 1);
@@ -72,7 +80,7 @@ suite('maid-cafe-vsc in real VS Code', () => {
   });
 
   test('import (url once, text, md file) -> requirements -> debug fix; personal info is masked', async () => {
-    const root = path.resolve(__dirname, '../fixture');
+    const root = FIX;
     await vscode.commands.executeCommand('maidCafe.project.import', { name: 'Demo Job', kind: 'url', value: `http://127.0.0.1:${port}/job`, noConfirm: true });
     await vscode.commands.executeCommand('maidCafe.project.import', { name: 'Demo Job', kind: 'text', value: 'Remote OK, 3 days a week' });
     await vscode.commands.executeCommand('maidCafe.project.import', { name: 'Demo Job', kind: 'file', value: vscode.Uri.file(path.resolve(root, 'brief.md')) });
@@ -114,5 +122,38 @@ suite('maid-cafe-vsc in real VS Code', () => {
     const { checkFetchUrl } = require('../../../out/core/project');
     assert.strictEqual(checkFetchUrl('file:///etc/passwd').ok, false);
     assert.strictEqual(checkFetchUrl('https://u:p@example.com/').ok, false);
+  });
+
+  test('third language: answers, selection translation and maid-cafe English chat', async () => {
+    assert.strictEqual(await vscode.commands.executeCommand('maidCafe.selectThirdLanguage', 'fr'), 'fr');
+    try {
+      // 1) selection translation keeps code blocks untouched
+      const src = 'Use a loop.\n```js\nfor (;;) {}\n```\nThen stop.';
+      const out = await vscode.commands.executeCommand('maidCafe.translateSelection', { text: src, to: 'de' });
+      assert.ok(out.includes('[de] Use a loop.') && out.includes('[de] Then stop.') && out.includes('for (;;) {}'));
+      assert.ok(translated.every((t) => !t.text.includes('for (;;)')), 'code is not sent to the translator');
+      assert.strictEqual(translated[translated.length - 1].target_lang, 'de');
+
+      // 2) the maid-cafe conversation: persona, correction, Japanese gloss, third-language line, history
+      const n = received.length;
+      const r1 = await vscode.commands.executeCommand('maidCafe.englishCafe', 'I wants tea');
+      assert.ok(r1.startsWith('Maid:'));
+      assert.ok(received[n].body.prompt.includes('maid at a cozy maid cafe') && received[n].body.prompt.includes('I wants tea'));
+      assert.ok(translated.some((t) => t.target_lang === 'fr' && t.text.startsWith('Welcome back')), 'maid line translated into the third language');
+      await vscode.commands.executeCommand('maidCafe.englishCafe', 'Green tea please');
+      assert.ok(received[n + 1].body.prompt.includes('I wants tea'), 'conversation history is sent');
+      await vscode.commands.executeCommand('maidCafe.englishCafe.reset');
+      await vscode.commands.executeCommand('maidCafe.englishCafe', 'Hello');
+      assert.ok(!received[n + 2].body.prompt.includes('I wants tea'), 'reset clears history');
+      // 3) AI answers about code are also translated into the third language (code block untouched)
+      const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(path.join(FIX, 'sample.js')));
+      const ed = await vscode.window.showTextDocument(doc);
+      ed.selection = new vscode.Selection(0, 0, 2, 1);
+      const ans = await vscode.commands.executeCommand('maidCafe.askSelection', 'Explain please');
+      assert.ok(ans.includes('Fixed the operator'));
+      assert.ok(translated.some((t) => t.target_lang === 'fr' && t.text.includes('Fixed the operator') && !t.text.includes('return a + b')), 'answer prose translated, code kept');
+    } finally {
+      await vscode.workspace.getConfiguration('maidCafe').update('thirdLanguage', '', vscode.ConfigurationTarget.Global);
+    }
   });
 });

@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { PALETTE, ColorId, RangeStore, MarkedRange } from './core/ranges';
-import { Conversation } from './core/chat';
+import { Conversation, Turn } from './core/chat';
+import { Language, EnglishLevel, findLanguage, LANGUAGES, buildTranslateRequest, parseTranslateResponse, looksPoor, translateKeepingCode, englishCafeSystem, parseCafeReply } from './core/translate';
 import { Stage, STAGES, learningInstruction, checkFetchUrl, htmlToText, projectDir, slugify } from './core/project';
 import { redact as redactSecrets } from './core/redact';
 import { ACTIONS, ActionId, extractCodeBlock, replaceLines } from './core/actions';
@@ -59,6 +60,7 @@ const conversation = new Conversation();
 let panel: vscode.WebviewPanel | undefined;
 let lastRanges: MarkedRange[] = [];
 let lastAnswer: string | undefined;
+let lastTranslation: { lang: Language; text: string } | undefined;
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 
@@ -73,7 +75,8 @@ function showConversation(title: string): void {
     .all()
     .map((t) => `<h4>${t.role === 'user' ? 'You' : 'AI'}</h4><pre style="white-space:pre-wrap;font-family:var(--vscode-editor-font-family)">${esc(t.content)}</pre>`)
     .join('');
-  panel.webview.html = `<!doctype html><html><body style="font-family:var(--vscode-font-family);padding:12px">${body}<p><i>Maid Cafe: Ask a follow-up question</i></p></body></html>`;
+  const tr = lastTranslation ? `<h4>${esc(lastTranslation.lang.native)}</h4><pre style="white-space:pre-wrap;font-family:var(--vscode-editor-font-family)">${esc(lastTranslation.text)}</pre>` : '';
+  panel.webview.html = `<!doctype html><html><body style="font-family:var(--vscode-font-family);padding:12px">${body}${tr}<p><i>Maid Cafe: Ask a follow-up question</i></p></body></html>`;
 }
 
 /** 質問を送って答えを返す(失敗時は undefined)。続きの質問は conversation に積む。 */
@@ -117,6 +120,12 @@ async function ask(ctx: vscode.ExtensionContext, ranges: MarkedRange[], question
       conversation.add('user', followUp ? question : `${bp.user}`);
       conversation.add('assistant', ans);
       lastAnswer = ans;
+      lastTranslation = undefined;
+      const third = thirdLanguage();
+      if (third) {
+        const t = await translateText(ctx, ans, third);
+        if (t) lastTranslation = { lang: third, text: t };
+      }
       showConversation(`AI: ${provider}`);
       return ans;
     } catch (e) {
@@ -176,6 +185,115 @@ async function runAction(ctx: vscode.ExtensionContext, id: ActionId, autoApply =
   if (ans === undefined) return undefined;
   if (id === 'fix') return proposeFix(uri, range.startLine, range.endLine, range.text, ans, autoApply);
   return ans;
+}
+
+// ---- 第3言語の翻訳と、メイドカフェ英会話 ----
+const cafeConv = new Conversation(16);
+let cafePanel: vscode.WebviewPanel | undefined;
+const cafeLog: { who: string; body: string }[] = [];
+
+function thirdLanguage(): Language | undefined {
+  const v = cfg().get<string>('thirdLanguage', '');
+  return v ? findLanguage(v) : undefined;
+}
+
+/** 1 回の問い合わせ(範囲や確認ダイアログなし)。失敗は undefined。 */
+async function callProvider(ctx: vscode.ExtensionContext, provider: ProviderId, system: string, user: string, history: Turn[] = [], maxTokens = 2048, promptKey = false): Promise<string | undefined> {
+  const meta = PROVIDERS.find((p) => p.id === provider)!;
+  let key = '';
+  if (meta.needsKey) {
+    key = (promptKey ? await getKey(ctx, provider) : await ctx.secrets.get(`maidCafe.key.${provider}`)) ?? '';
+    if (!key) return undefined;
+  }
+  const models = cfg().get<Record<string, string>>('models', {});
+  const req = buildRequest({ provider, key, model: models[provider], system, user, history, maxTokens, aruaruUrl: cfg().get('aruaruUrl') });
+  try {
+    const res = await fetch(req.url, { method: 'POST', headers: req.headers, body: req.body, signal: AbortSignal.timeout(60000) });
+    const text = await res.text();
+    if (!res.ok) {
+      vscode.window.showErrorMessage(explainError(res.status, text));
+      return undefined;
+    }
+    return parseResponse(provider, JSON.parse(text)) ?? undefined;
+  } catch (e) {
+    vscode.window.showErrorMessage(`Network error: ${(e as Error).message}`);
+    return undefined;
+  }
+}
+
+/** 無料(aruaru)の結果が悪そうなら、利用者が自分で契約した AI(鍵が保存済みのもの)に切り替える。 */
+function fallbackProvider(): ProviderId | undefined {
+  const f = cfg().get<string>('translateFallbackProvider', '');
+  return f && f !== 'aruaru' ? (f as ProviderId) : undefined;
+}
+
+async function translateOne(ctx: vscode.ExtensionContext, text: string, target: Language): Promise<string | undefined> {
+  const provider = cfg().get<ProviderId>('provider', 'aruaru');
+  const run = async (p: ProviderId): Promise<string | undefined> => {
+    const meta = PROVIDERS.find((x) => x.id === p)!;
+    const key = meta.needsKey ? ((await ctx.secrets.get(`maidCafe.key.${p}`)) ?? '') : '';
+    if (meta.needsKey && !key) return undefined;
+    const models = cfg().get<Record<string, string>>('models', {});
+    const req = buildTranslateRequest({ provider: p, key, model: models[p], aruaruUrl: cfg().get('aruaruUrl'), text, target });
+    try {
+      const res = await fetch(req.url, { method: 'POST', headers: req.headers, body: req.body, signal: AbortSignal.timeout(60000) });
+      if (!res.ok) return undefined;
+      return parseTranslateResponse(p, await res.json()) ?? undefined;
+    } catch {
+      return undefined;
+    }
+  };
+  let out = await run(provider);
+  if (provider === 'aruaru' && looksPoor(text, out, target)) {
+    const fb = fallbackProvider();
+    if (fb) out = (await run(fb)) ?? out;
+  }
+  return out;
+}
+
+/** 文章だけを第 3 言語へ(コードブロックは訳さない)。 */
+async function translateText(ctx: vscode.ExtensionContext, text: string, target: Language): Promise<string | undefined> {
+  return translateKeepingCode(text, (prose) => translateOne(ctx, prose, target));
+}
+
+function showCafe(): void {
+  if (!cafePanel) {
+    cafePanel = vscode.window.createWebviewPanel('maidCafeEnglish', 'Maid Cafe English', vscode.ViewColumn.Beside, { enableScripts: false });
+    cafePanel.onDidDispose(() => (cafePanel = undefined));
+  }
+  const body = cafeLog.map((l) => `<h4>${esc(l.who)}</h4><pre style="white-space:pre-wrap;font-family:var(--vscode-font-family)">${esc(l.body)}</pre>`).join('');
+  cafePanel.webview.html = `<!doctype html><html><body style="font-family:var(--vscode-font-family);padding:12px"><h3>☕ Maid Cafe English</h3>${body}<p><i>Run "Maid Cafe: English conversation (maid cafe)" to continue.</i></p></body></html>`;
+}
+
+/** メイドカフェ英会話の 1 往復。 */
+async function englishCafe(ctx: vscode.ExtensionContext, messageArg?: string): Promise<string | undefined> {
+  const message = messageArg ?? (await vscode.window.showInputBox({ prompt: 'Say something to the maid (English or Japanese)', ignoreFocusOut: true }));
+  if (!message) return undefined;
+  const level = cfg().get<EnglishLevel>('englishLevel', 'beginner');
+  const third = thirdLanguage();
+  const system = englishCafeSystem(level, true);
+  const user = cfg().get('redactSecrets', true) ? redactSecrets(message) : message;
+  const provider = cfg().get<ProviderId>('provider', 'aruaru');
+  let reply = await callProvider(ctx, provider, system, user, cafeConv.all(), 512, true);
+  if (provider === 'aruaru' && looksPoor(message, reply, findLanguage('en')!)) {
+    const fb = fallbackProvider();
+    if (fb) reply = (await callProvider(ctx, fb, system, user, cafeConv.all(), 512)) ?? reply;
+  }
+  if (!reply) return undefined;
+  cafeConv.add('user', user);
+  cafeConv.add('assistant', reply);
+  const parsed = parseCafeReply(reply);
+  cafeLog.push({ who: 'You', body: message });
+  const lines = [`Maid: ${parsed.maid}`];
+  if (parsed.correction) lines.push(`✏ Correction: ${parsed.correction}`);
+  if (parsed.ja) lines.push(`日本語: ${parsed.ja}`);
+  if (third) {
+    const t = await translateText(ctx, parsed.maid, third);
+    if (t) lines.push(`${third.native}: ${t}`);
+  }
+  cafeLog.push({ who: 'Maid', body: lines.join('\n') });
+  showCafe();
+  return reply;
 }
 
 // ---- 案件の取り込みと 設計→開発→DEBUG ----
@@ -387,6 +505,30 @@ export function activate(ctx: vscode.ExtensionContext): { store: RangeStore; las
     vscode.commands.registerCommand('maidCafe.openArurau', () => vscode.env.openExternal(vscode.Uri.parse(cfg().get<string>('arurauPageUrl', ARURAU_URL)))),
     vscode.commands.registerCommand('maidCafe.project.import', (a?: ImportArgs | vscode.Uri) => importMaterial(ctx, a instanceof vscode.Uri ? { kind: 'file', value: a } : a)),
     vscode.commands.registerCommand('maidCafe.project.step', (a?: StageArgs) => runStage(ctx, a)),
+    vscode.commands.registerCommand('maidCafe.selectThirdLanguage', async (code?: string) => {
+      const l = code ? findLanguage(code) : (await vscode.window.showQuickPick(LANGUAGES.map((x) => ({ label: `${x.native} (${x.name})`, description: x.code, l: x })), { placeHolder: 'Third language (shown next to every answer)' }))?.l;
+      if (l) await cfg().update('thirdLanguage', l.code, vscode.ConfigurationTarget.Global);
+      return l?.code;
+    }),
+    vscode.commands.registerCommand('maidCafe.translateSelection', async (a?: { text?: string; to?: string }) => {
+      const ed = vscode.window.activeTextEditor;
+      const text = a?.text ?? (ed && !ed.selection.isEmpty ? ed.document.getText(ed.selection) : undefined);
+      if (!text) return vscode.window.showInformationMessage('Select the text to translate (for example a school explanation).');
+      const target = (a?.to ? findLanguage(a.to) : thirdLanguage()) ?? findLanguage('en')!;
+      const out = await translateText(ctx, cfg().get('redactSecrets', true) ? redactSecrets(text) : text, target);
+      if (out === undefined) {
+        vscode.window.showWarningMessage('Translation failed (check the provider / aruaruUrl, or set a fallback provider).');
+        return undefined;
+      }
+      const doc = await vscode.workspace.openTextDocument({ content: out, language: 'markdown' });
+      await vscode.window.showTextDocument(doc, { viewColumn: vscode.ViewColumn.Beside, preview: true });
+      return out;
+    }),
+    vscode.commands.registerCommand('maidCafe.englishCafe', (message?: string) => englishCafe(ctx, message)),
+    vscode.commands.registerCommand('maidCafe.englishCafe.reset', () => {
+      cafeConv.clear();
+      cafeLog.length = 0;
+    }),
     vscode.commands.registerCommand('maidCafe.clearColors', () => {
       store.clear();
       repaint(vscode.window.activeTextEditor);

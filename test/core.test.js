@@ -104,3 +104,26 @@ test('personal info is masked, urls are checked, html is flattened', () => {
   assert.strictEqual(projectDir('A b'), '.maid-cafe/projects/A-b');
   assert.ok(learningInstruction('debug', true).includes('Why') && learningInstruction('debug', false) === '');
 });
+
+const T = require('../out/core/translate');
+test('translate: languages, code-preserving split, request shapes, poor-output check, cafe reply parsing', async () => {
+  assert.strictEqual(T.findLanguage('Français').code, 'fr');
+  assert.ok(T.LANGUAGES.length >= 30 && T.findLanguage('ja') && T.findLanguage('en'));
+  const pkg = JSON.parse(require('fs').readFileSync(require('path').join(__dirname, '../package.json'), 'utf8'));
+  assert.deepStrictEqual(pkg.contributes.configuration.properties['maidCafe.thirdLanguage'].enum, ['', ...T.LANGUAGES.map((l) => l.code)]);
+  const out = await T.translateKeepingCode('A\n```x\ncode\n```\nB', async (p) => `<${p}>`);
+  assert.strictEqual(out, '<A>\n```x\ncode\n```\n<B>');
+  assert.strictEqual(await T.translateKeepingCode('A', async () => undefined), undefined);
+  const fr = T.findLanguage('fr');
+  const free = T.buildTranslateRequest({ provider: 'aruaru', text: 'hi', target: fr });
+  assert.ok(free.url.endsWith('/aruaru_llm.Llm/Translate') && JSON.parse(free.body).target_lang === 'fr');
+  assert.strictEqual(T.parseTranslateResponse('aruaru', { translation: 'salut' }), 'salut');
+  const paid = T.buildTranslateRequest({ provider: 'claude', key: 'K', text: 'hi', target: fr });
+  assert.ok(JSON.parse(paid.body).system.includes('native speaker') && paid.url.includes('anthropic'));
+  assert.ok(T.looksPoor('Hello world this is a test', '', fr) && T.looksPoor('Hello world this is a test', 'Hello world this is a test', fr));
+  assert.ok(!T.looksPoor('Hello world this is a test sentence', 'Bonjour le monde, ceci est une phrase de test', fr));
+  const p = T.parseCafeReply('Maid: Hi!\nCorrection: Perfect!\n日本語: やあ');
+  assert.deepStrictEqual([p.maid, p.correction, p.ja], ['Hi!', 'Perfect!', 'やあ']);
+  assert.strictEqual(T.parseCafeReply('just text').maid, 'just text');
+  assert.ok(T.englishCafeSystem('beginner').includes('maid cafe'));
+});

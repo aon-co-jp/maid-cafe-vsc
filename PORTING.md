@@ -26,3 +26,13 @@ Purpose, rules and open items as above: pure logic lives in `src/core/`; no new 
 - `https://audiocafe.tokyo/aruaru` returns 200 by curl (job/project matching). The requested `/arurau` also returns 200 but is the site-wide language-selection page, so `/aruaru` is used (please confirm the spelling). Added the command and setting `maidCafe.arurauPageUrl`.
 - Added: `core/project.ts` (personal-data masking, URL checks, HTML→text, stages and learning mode), commands `project.import` / `project.step`, settings `redactPersonal` / `learningMode`. Saved in `.maid-cafe/projects/<name>/`. A URL is fetched once after confirmation. pdf/docx and drag-and-drop are not supported yet.
 - Tests: 9 unit + 4 real-VS-Code tests pass (mock server, no sound). Real provider APIs remain unverified.
+
+## 2026-11-27(3) メイドカフェ英会話・第3言語の翻訳 / Maid-cafe English and third-language translation
+### 日本語
+- 追加: `core/translate.ts`(約40言語、コードを訳さない翻訳、翻訳要求の形、出来の悪さ判定、メイド英会話の指示と返答の分解)、コマンド `selectThirdLanguage` / `translateSelection` / `englishCafe` / `englishCafe.reset`、設定 `thirdLanguage` / `translateFallbackProvider` / `englishLevel`。
+- 既存資産: aruaru-llm の `Translate`(`{text,target_lang(ISO),source_lang,tenant}` → `{translation,engine,disclosure}`)と `tools/translate-worker`(M2M100 418M + CTranslate2)を再利用(自作せず)。M2M100 は HuggingFace のモデルカードで license=mit を確認。**NLLB(CC-BY-NC)は使わない**。
+- 試験: 単体10件、実VS Code5件(3回連続成功)。試験が前回の残りで狂う不具合(作業フォルダ・設定の持ち越し)を、毎回一時フォルダにして直した。未確認: 公開された aruaru-llm / 各社の実APIでの翻訳(疑似サーバーのみ)。
+### English
+- Added: `core/translate.ts` (about 40 languages, code-preserving translation, request shapes, poor-output check, maid English prompt and reply parsing), commands `selectThirdLanguage` / `translateSelection` / `englishCafe` / `englishCafe.reset`, settings `thirdLanguage` / `translateFallbackProvider` / `englishLevel`.
+- Reused assets: aruaru-llm's `Translate` (`{text,target_lang(ISO),source_lang,tenant}` → `{translation,engine,disclosure}`) and `tools/translate-worker` (M2M100 418M + CTranslate2), nothing rebuilt. M2M100 license=mit confirmed on the HuggingFace model card. **NLLB (CC-BY-NC) is not used.**
+- Tests: 10 unit + 5 real-VS-Code (3 passes in a row). Fixed a test flake caused by leftover workspace/settings by using a fresh temp dir per run. Unverified: translation through a public aruaru-llm or the real provider APIs (mock server only).

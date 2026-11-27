@@ -1,18 +1,26 @@
-// 実 VS Code(ダウンロードした Electron 版)を開き、拡張を読み込んで suite を走らせる。音は鳴らさない。
+// 実 VS Code(ダウンロードした公式版)を開き、拡張を読み込んで suite を走らせる。音は鳴らさない。
+// 毎回、作業フォルダと設定フォルダを一時ディレクトリに作り直す(前回の残りで試験が狂わないように)。
+const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const { runTests } = require('@vscode/test-electron');
 (async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'maid-cafe-vsc-test-'));
+  const work = path.join(tmp, 'workspace');
+  fs.cpSync(path.resolve(__dirname, 'fixture'), work, { recursive: true });
   try {
     await runTests({
       extensionDevelopmentPath: path.resolve(__dirname, '../..'),
       extensionTestsPath: path.resolve(__dirname, 'suite/index.js'),
-      launchArgs: [path.resolve(__dirname, 'fixture'), '--disable-extensions', '--disable-gpu', '--mute-audio'],
+      extensionTestsEnv: { MAID_FIXTURE: work },
+      launchArgs: [work, `--user-data-dir=${path.join(tmp, 'user')}`, '--disable-extensions', '--disable-gpu', '--mute-audio'],
     });
   } catch (e) {
     console.error('VS Code test failed:', e);
-    process.exit(1);
+    process.exitCode = 1;
   } finally {
-    // 試験が作った案件フォルダを片づける(VS Code 終了後)。
-    require('node:fs').rmSync(path.resolve(__dirname, 'fixture/.maid-cafe'), { recursive: true, force: true });
+    try {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    } catch {}
   }
 })();

@@ -81,6 +81,22 @@
       {
         "command": "maidCafe.project.step",
         "title": "Maid Cafe: Project step (requirements, design, tasks, code, review, debug)"
+      },
+      {
+        "command": "maidCafe.selectThirdLanguage",
+        "title": "Maid Cafe: Choose the third language (translation)"
+      },
+      {
+        "command": "maidCafe.translateSelection",
+        "title": "Maid Cafe: Translate the selection (native-like)"
+      },
+      {
+        "command": "maidCafe.englishCafe",
+        "title": "Maid Cafe: English conversation (maid cafe)"
+      },
+      {
+        "command": "maidCafe.englishCafe.reset",
+        "title": "Maid Cafe: Restart the English conversation"
       }
     ],
     "menus": {
@@ -113,6 +129,11 @@
         {
           "command": "maidCafe.askAboutColor",
           "group": "maidCafe@6"
+        },
+        {
+          "command": "maidCafe.translateSelection",
+          "when": "editorHasSelection",
+          "group": "maidCafe@7"
         }
       ],
       "explorer/context": [
@@ -190,6 +211,76 @@
           "type": "boolean",
           "default": true,
           "description": "Learning mode: each project step also explains briefly why it is done that way."
+        },
+        "maidCafe.thirdLanguage": {
+          "type": "string",
+          "default": "",
+          "enum": [
+            "",
+            "ja",
+            "en",
+            "zh",
+            "ko",
+            "es",
+            "fr",
+            "de",
+            "it",
+            "pt",
+            "ru",
+            "uk",
+            "pl",
+            "nl",
+            "sv",
+            "da",
+            "fi",
+            "cs",
+            "el",
+            "hu",
+            "ro",
+            "tr",
+            "ar",
+            "fa",
+            "he",
+            "hi",
+            "bn",
+            "ta",
+            "ur",
+            "th",
+            "vi",
+            "id",
+            "ms",
+            "tl",
+            "sw",
+            "af",
+            "my",
+            "km",
+            "ne",
+            "mn"
+          ],
+          "description": "Third language besides Japanese and English. When set, every AI answer and English-conversation reply is also translated into it, as a native speaker would write (free: aruaru-llm translation worker, M2M100 418M, MIT; paid: your own provider key). Empty = off."
+        },
+        "maidCafe.translateFallbackProvider": {
+          "type": "string",
+          "default": "",
+          "enum": [
+            "",
+            "openai",
+            "gemini",
+            "deepseek",
+            "grok",
+            "claude"
+          ],
+          "description": "When the free translation or conversation looks poor, retry with this provider using your own saved API key (set it with 'Maid Cafe: Set an AI provider API key'). Empty = never."
+        },
+        "maidCafe.englishLevel": {
+          "type": "string",
+          "default": "beginner",
+          "enum": [
+            "beginner",
+            "intermediate",
+            "advanced"
+          ],
+          "description": "English level of the maid-cafe conversation."
         }
       }
     }
