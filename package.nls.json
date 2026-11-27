@@ -32,5 +32,8 @@
   "wt.english.title": "Maid-cafe English and a third language",
   "wt.english.desc": "Practice English with a maid; mistakes are corrected gently. Pick a third language so answers and replies also appear in it.",
   "wt.title": "Get started with Maid Cafe Code Helper",
-  "wt.desc": "Colour, ask, import a job, practise English."
+  "wt.desc": "Colour, ask, import a job, practise English.",
+  "cmd.dropPanel": "Maid Cafe: Drop job files (drag & drop import)",
+  "cmd.importDropped": "Maid Cafe: Import dropped files",
+  "view.dropZone": "Maid Cafe: Drop job files"
 }

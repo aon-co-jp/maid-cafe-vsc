@@ -103,6 +103,14 @@
       {
         "command": "maidCafe.welcome",
         "title": "%cmd.welcome%"
+      },
+      {
+        "command": "maidCafe.project.dropPanel",
+        "title": "%cmd.dropPanel%"
+      },
+      {
+        "command": "maidCafe.project.importDropped",
+        "title": "%cmd.importDropped%"
       }
     ],
     "menus": {
@@ -147,6 +155,12 @@
           "command": "maidCafe.project.import",
           "when": "resourceExtname =~ /\\.(md|markdown|txt|docx|pdf)$/",
           "group": "maidCafe@1"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "maidCafe.project.importDropped",
+          "when": "false"
         }
       ]
     },
@@ -353,7 +367,15 @@
           }
         ]
       }
-    ]
+    ],
+    "views": {
+      "explorer": [
+        {
+          "id": "maidCafe.dropZone",
+          "name": "%view.dropZone%"
+        }
+      ]
+    }
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",

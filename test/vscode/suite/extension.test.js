@@ -8,6 +8,7 @@ suite('maid-cafe-vsc in real VS Code', () => {
   let server;
   const received = [];
   const translated = [];
+  const ocrCalls = [];
   let port;
   suiteSetup(async () => {
     // 疑似 aruaru-llm(Connect 形式、応答は {completion,...})。外には出ない。
@@ -20,6 +21,11 @@ suite('maid-cafe-vsc in real VS Code', () => {
       req.on('data', (c) => (b += c));
       req.on('end', () => {
         const body = JSON.parse(b);
+        if (req.url === '/aruaru_llm.Llm/Ocr') {
+          ocrCalls.push(body);
+          res.setHeader('content-type', 'application/json');
+          return res.end(JSON.stringify({ pages: [{ lines: [{ text: 'Scanned job: Go engineer, remote' }] }], engine: 'mock-tesseract' }));
+        }
         if (req.url === '/aruaru_llm.Llm/Translate') {
           translated.push(body);
           res.setHeader('content-type', 'application/json');
@@ -130,6 +136,33 @@ suite('maid-cafe-vsc in real VS Code', () => {
       await vscode.workspace.applyEdit(e);
       await doc.save();
     }
+  });
+
+  test('drag & drop import: explorer uri-list, webview file bytes, scanned PDF via OCR', async () => {
+    const fs = require('node:fs');
+    const { makeImageOnlyPdf } = require('../../helpers/scanpdf');
+    const all = await vscode.commands.getCommands(true);
+    assert.ok(all.includes('maidCafe.project.dropPanel') && all.includes('maidCafe.project.importDropped'));
+    const root = vscode.workspace.workspaceFolders[0].uri.fsPath;
+    const src = path.join(root, '.maid-cafe/projects/Drop-Job/source');
+    // エクスプローラーからのドロップ(DataTransfer の text/uri-list)
+    const dt = new vscode.DataTransfer();
+    dt.set('text/uri-list', new vscode.DataTransferItem(vscode.Uri.file(path.resolve(root, 'brief.md')).toString()));
+    const r1 = await vscode.commands.executeCommand('maidCafe.project._handleDrop', dt, 'Drop Job');
+    assert.strictEqual(r1.length, 1);
+    // Webview へのドロップ(ファイルの中身): テキストと、画像だけの PDF(OCR)、未対応形式
+    const before = ocrCalls.length;
+    const pdf = makeImageOnlyPdf({ kind: 'gray' });
+    const r2 = await vscode.commands.executeCommand('maidCafe.project._dropMessage', { files: [{ name: 'note.txt', data: [...Buffer.from('Dropped note: weekly sync')] }, { name: 'scan.pdf', data: [...pdf] }, { name: 'x.exe', data: [1] }] }, 'Drop Job');
+    assert.strictEqual(r2.length, 2, 'txt and scanned pdf imported, exe refused');
+    assert.strictEqual(ocrCalls.length, before + 1);
+    assert.strictEqual(ocrCalls[before].images_base64.length, 1);
+    const text = fs.readdirSync(src).map((f) => fs.readFileSync(path.join(src, f), 'utf8')).join(String.fromCharCode(10));
+    assert.ok(text.includes('Dropped note') && text.includes('Scanned job: Go engineer'), 'dropped and OCR text saved');
+    // ドロップ用の Webview が開くこと
+    const panel = await vscode.commands.executeCommand('maidCafe.project.dropPanel');
+    assert.deepStrictEqual(panel, { title: 'Maid Cafe: Drop job files', scripts: true, hasDropZone: true });
+    fs.rmSync(path.join(root, '.maid-cafe/projects/Drop-Job'), { recursive: true, force: true });
   });
 
   test('url import refuses non-http and credentials', async () => {

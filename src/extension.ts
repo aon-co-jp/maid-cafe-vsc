@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { PALETTE, ColorId, RangeStore, MarkedRange } from './core/ranges';
 import { Conversation, Turn } from './core/chat';
 import { extractText, fileKind } from './core/extract';
+import { ocrImages } from './core/ocr';
 import { Language, EnglishLevel, findLanguage, LANGUAGES, buildTranslateRequest, parseTranslateResponse, looksPoor, translateKeepingCode, englishCafeSystem, parseCafeReply } from './core/translate';
 import { Stage, STAGES, learningInstruction, checkFetchUrl, htmlToText, projectDir, slugify, importHeader } from './core/project';
 import { redact as redactSecrets } from './core/redact';
@@ -358,9 +359,125 @@ async function currentProject(ctx: vscode.ExtensionContext): Promise<string | un
 
 interface ImportArgs {
   name?: string;
-  kind?: 'url' | 'text' | 'file';
+  kind?: 'url' | 'text' | 'file' | 'bytes';
   value?: string | vscode.Uri;
+  /** kind='bytes'(Webview へのドロップ)のときのファイル名と中身。 */
+  fileName?: string;
+  data?: Uint8Array;
   noConfirm?: boolean;
+}
+
+/** ファイルの中身を文章にする。画像だけの PDF は aruaru-llm の OCR(版なし Connect)で読む。失敗は警告で知らせる。 */
+async function readMaterial(name: string, bytes: Uint8Array): Promise<string | undefined> {
+  if (fileKind(name) === 'unsupported') {
+    vscode.window.showWarningMessage(`Supported files: md, txt, docx, pdf (${name.split(/[\\/]/).pop()}).`);
+    return undefined;
+  }
+  try {
+    return await extractText(name, bytes, (images) => Promise.resolve(
+      vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Maid Cafe: reading ${images.length} scanned page(s) with OCR...` }, () => ocrImages(cfg().get<string>('aruaruUrl'), images))),
+    );
+  } catch (e) {
+    vscode.window.showWarningMessage('Could not read the file: ' + (e as Error).message);
+    return undefined;
+  }
+}
+
+type DropItem = { uri?: vscode.Uri; name?: string; data?: Uint8Array };
+
+/** ドロップされた複数ファイルを取り込む(エクスプローラー・OS・Webview から)。 */
+async function importDropped(ctx: vscode.ExtensionContext, items: DropItem[], name?: string): Promise<string[]> {
+  const out: string[] = [];
+  if (!items.length) return out;
+  const project = name ?? (await currentProject(ctx)) ?? (await vscode.window.showInputBox({ prompt: 'Project name (folder under .maid-cafe/projects/)', ignoreFocusOut: true }));
+  if (!project) return out;
+  for (const it of items) {
+    const r = it.uri
+      ? await importMaterial(ctx, { name: project, kind: 'file', value: it.uri })
+      : await importMaterial(ctx, { name: project, kind: 'bytes', fileName: it.name, data: it.data });
+    if (r) out.push(r);
+  }
+  return out;
+}
+
+/** Webview から届いたドロップの中身を取り込み用の形にする(ファイル実体と uri-list の両方)。 */
+function dropMessageToItems(m: { files?: { name: string; data: number[] }[]; uris?: string[] }): DropItem[] {
+  return [...(m.uris ?? []).map((u) => ({ uri: vscode.Uri.parse(u) })), ...(m.files ?? []).map((f) => ({ name: f.name, data: Uint8Array.from(f.data) }))];
+}
+
+let dropPanel: vscode.WebviewPanel | undefined;
+/** ドロップ用の Webview(ファイルをここへドラッグ&ドロップすると案件資料として取り込む)。 */
+function openDropPanel(ctx: vscode.ExtensionContext): vscode.WebviewPanel {
+  if (dropPanel) {
+    dropPanel.reveal();
+    return dropPanel;
+  }
+  dropPanel = vscode.window.createWebviewPanel('maidCafeDrop', 'Maid Cafe: Drop job files', vscode.ViewColumn.Beside, { enableScripts: true });
+  dropPanel.onDidDispose(() => (dropPanel = undefined));
+  const nonce = Math.random().toString(36).slice(2);
+  dropPanel.webview.html = `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';"></head>
+<body style="font-family:var(--vscode-font-family);padding:12px">
+<div id="z" style="border:2px dashed var(--vscode-focusBorder);padding:40px;text-align:center">Drop md / txt / docx / pdf files here<br>(scanned PDFs are read with OCR)<br><small>From the VS Code explorer, hold Shift while dropping.</small></div>
+<p id="s"></p>
+<script nonce="${nonce}">
+const vs = acquireVsCodeApi(); const z = document.getElementById('z'); const st = document.getElementById('s');
+for (const ev of ['dragenter','dragover']) z.addEventListener(ev, e => { e.preventDefault(); z.style.opacity = .6; });
+z.addEventListener('dragleave', () => z.style.opacity = 1);
+z.addEventListener('drop', async e => {
+  e.preventDefault(); z.style.opacity = 1;
+  const files = [...(e.dataTransfer.files || [])];
+  const uris = (e.dataTransfer.getData('text/uri-list') || '').split(/\\r?\\n/).filter(u => u && !u.startsWith('#'));
+  const payload = [];
+  for (const f of files) payload.push({ name: f.name, data: [...new Uint8Array(await f.arrayBuffer())] });
+  if (!payload.length && !uris.length) { st.textContent = 'Nothing to import.'; return; }
+  st.textContent = 'Importing...'; vs.postMessage({ type: 'drop', files: payload, uris: payload.length ? [] : uris });
+});
+window.addEventListener('message', e => { if (e.data.type === 'done') st.textContent = e.data.text; });
+</script></body></html>`;
+  dropPanel.webview.onDidReceiveMessage(
+    async (m: { type: string; files?: { name: string; data: number[] }[]; uris?: string[] }) => {
+      if (m.type !== 'drop') return;
+      const items = dropMessageToItems(m);
+      const r = await importDropped(ctx, items);
+      dropPanel?.webview.postMessage({ type: 'done', text: `Imported ${r.length} of ${items.length} file(s).` });
+    },
+    undefined,
+    ctx.subscriptions,
+  );
+  return dropPanel;
+}
+
+/** エクスプローラー(または OS)からのドロップを受ける小さなビュー。 */
+class DropZoneController implements vscode.TreeDataProvider<string>, vscode.TreeDragAndDropController<string> {
+  readonly dropMimeTypes = ['text/uri-list', 'files'];
+  readonly dragMimeTypes: string[] = [];
+  constructor(private ctx: vscode.ExtensionContext) {}
+  getTreeItem(e: string): vscode.TreeItem {
+    const t = new vscode.TreeItem(e);
+    t.command = { command: 'maidCafe.project.dropPanel', title: e };
+    return t;
+  }
+  getChildren(): string[] {
+    return ['Drop job files here (md, txt, docx, pdf)'];
+  }
+  async handleDrop(_t: string | undefined, dt: vscode.DataTransfer): Promise<void> {
+    await importDropped(this.ctx, await dataTransferToItems(dt));
+  }
+}
+
+/** DataTransfer(uri-list または OS からのファイル)を取り込み用の形にする。 */
+async function dataTransferToItems(dt: vscode.DataTransfer): Promise<DropItem[]> {
+  const items: DropItem[] = [];
+  const list = await dt.get('text/uri-list')?.asString();
+  for (const u of (list ?? '').split(/\r?\n/)) if (u.trim() && !u.startsWith('#')) items.push({ uri: vscode.Uri.parse(u.trim()) });
+  if (items.length) return items;
+  const files: vscode.DataTransferFile[] = [];
+  dt.forEach((v) => {
+    const f = v.asFile();
+    if (f) files.push(f);
+  });
+  for (const f of files) items.push(f.uri ? { uri: f.uri } : { name: f.name, data: await f.data() });
+  return items;
 }
 
 async function importMaterial(ctx: vscode.ExtensionContext, a: ImportArgs = {}): Promise<string | undefined> {
@@ -391,11 +508,17 @@ async function importMaterial(ctx: vscode.ExtensionContext, a: ImportArgs = {}):
     text = await fetchOnce(u, !a.noConfirm);
   } else if (kind === 'text') {
     text = typeof a.value === 'string' ? a.value : await vscode.env.clipboard.readText();
+  } else if (kind === 'bytes') {
+    if (!a.fileName || !a.data) return undefined;
+    label = 'file';
+    text = await readMaterial(a.fileName, a.data);
+    if (text === undefined) return undefined;
   } else {
     let f: vscode.Uri | undefined = a.value instanceof vscode.Uri ? a.value : undefined;
     f ??= (await vscode.window.showOpenDialog({ canSelectMany: false, filters: { 'Job info': ['md', 'txt', 'markdown', 'docx', 'pdf'] } }))?.[0];
     if (!f) return undefined;
-if (fileKind(f.path) === 'unsupported') {      vscode.window.showWarningMessage('Supported files: md, txt, docx, pdf.');      return undefined;    }    try {      text = await extractText(f.path, await vscode.workspace.fs.readFile(f));    } catch (e) {      vscode.window.showWarningMessage('Could not read the file: ' + (e as Error).message);      return undefined;    }
+    text = await readMaterial(f.path, await vscode.workspace.fs.readFile(f));
+    if (text === undefined) return undefined;
   }
   if (!text || !text.trim()) {
     vscode.window.showWarningMessage('Nothing to import.');
@@ -468,6 +591,7 @@ async function runStage(ctx: vscode.ExtensionContext, a: StageArgs = {}): Promis
 }
 
 export function activate(ctx: vscode.ExtensionContext): { store: RangeStore; lastAnswer: () => string | undefined } {
+  const dropZone = new DropZoneController(ctx);
   // 初回だけ、はじめてのガイドを開く(試験中は開かない)。
   if (ctx.extensionMode !== vscode.ExtensionMode.Test && !ctx.globalState.get('maidCafe.welcomed')) {
     void ctx.globalState.update('maidCafe.welcomed', true);
@@ -506,6 +630,15 @@ export function activate(ctx: vscode.ExtensionContext): { store: RangeStore; las
     vscode.commands.registerCommand('maidCafe.writeTests', async () => runAction(ctx, 'test')),
     vscode.commands.registerCommand('maidCafe.openArurau', () => vscode.env.openExternal(vscode.Uri.parse(cfg().get<string>('arurauPageUrl', ARURAU_URL)))),
     vscode.commands.registerCommand('maidCafe.project.import', (a?: ImportArgs | vscode.Uri) => importMaterial(ctx, a instanceof vscode.Uri ? { kind: 'file', value: a } : a)),
+    vscode.commands.registerCommand('maidCafe.project.importDropped', (uris?: (vscode.Uri | string)[], name?: string) => importDropped(ctx, (uris ?? []).map((u) => ({ uri: typeof u === 'string' ? vscode.Uri.parse(u) : u })), name)),
+    vscode.commands.registerCommand('maidCafe.project.dropPanel', () => {
+      const p = openDropPanel(ctx);
+      return { title: p.title, scripts: !!p.webview.options.enableScripts, hasDropZone: p.webview.html.includes('id="z"') };
+    }),
+    // 試験用(内部): Webview のドロップ内容・DataTransfer をそのまま渡して取り込む
+    vscode.commands.registerCommand('maidCafe.project._dropMessage', (m: { files?: { name: string; data: number[] }[]; uris?: string[] }, name?: string) => importDropped(ctx, dropMessageToItems(m), name)),
+    vscode.commands.registerCommand('maidCafe.project._handleDrop', async (dt: vscode.DataTransfer, name?: string) => importDropped(ctx, await dataTransferToItems(dt), name)),
+    vscode.window.createTreeView('maidCafe.dropZone', { treeDataProvider: dropZone, dragAndDropController: dropZone }),
     vscode.commands.registerCommand('maidCafe.project.step', (a?: StageArgs) => runStage(ctx, a)),
     vscode.commands.registerCommand('maidCafe.selectThirdLanguage', async (code?: string) => {
       const l = code ? findLanguage(code) : (await vscode.window.showQuickPick(LANGUAGES.map((x) => ({ label: `${x.native} (${x.name})`, description: x.code, l: x })), { placeHolder: 'Third language (shown next to every answer)' }))?.l;

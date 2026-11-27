@@ -123,3 +123,16 @@ A VS Code extension: select code with the mouse or cursor, **mark it with any co
 - Imported job material now starts with a header recording the engagement type (freelance / dispatch / employee, guessed from the text, several allowed, otherwise unknown) and the source (`classifyEngagement` / `importHeader` in `core/project.ts`). 13 unit and 5 real VS Code tests pass.
 - URL recheck (2026-11-27): `https://audiocafe.tokyo/aruaru` returns 200 with the job-matching title; the requested `/arurau` returns 200 but is the site-wide language picker. The correct URL `/aruaru` is configured.
 - All four features (third-language English chat and translation via versionless Connect `aruaru_llm.Llm/Translate`, the arurau intro, job import, learn-while-you-design/build/debug) already existed; this round re-verified them in real VS Code. **Unverified**: live calls to a public aruaru-llm and translation quality, real provider APIs.
+
+## 2026-11-27 ドラッグ&ドロップ取り込みと画像だけのPDFのOCR / Drag-and-drop import and OCR for image-only PDFs
+**日本語**
+- **ドラッグ&ドロップ**: エクスプローラーに「メイドカフェ: 案件資料をここへドロップ」ビューを追加(VS Code のエクスプローラーや OS からのファイルを受ける)。コマンド「案件資料をドラッグ&ドロップで取り込む」で開く Webview にファイルを落としても取り込める(md・txt・docx・pdf、複数可、未対応形式は警告して飛ばす)。取り込み先は今の案件(無ければ名前を聞く)。
+- **画像だけのPDFのOCR**: PDF から文字が取れないとき、埋め込み画像(JPEG、または 8bit の Gray/RGB の Flate 画像を PNG にしたもの、最大16ページ)を取り出し、aruaru-llm の版なし Connect `POST /aruaru_llm.Llm/Ocr` に送る(新しいRESTは作らない、`x-tenant: maid-cafe-vsc`)。届かない・404・503 のときは理由と「`maidCafe.aruaruUrl` を確認するか文章を貼り付けて」と表示する。
+- **試験(実測)**: `npm test` 17件成功(画像抽出・PNG・要求形・疑似サーバーでのOCR成功/404/接続不可)。`npm run test:vscode` 6件成功(実VS Code 1.148.0: uri-list のドロップ、Webview のファイルのドロップ、画像だけのPDFのOCR、ドロップ用Webviewが開くこと)。
+- **未確認・制限(正直に)**: マウスでの実際のドラッグ操作は自動試験で再現できず未確認(処理は同じ関数を通している)。**本番の `https://maid-cafe.tokyo/aruaru_llm.Llm/Ocr` は 2026-11-27 時点で 404**(OCR未公開)なので、既定設定ではOCRはエラー表示になる。OCRを提供する aruaru-llm を `maidCafe.aruaruUrl` に指す必要がある。本物の OCR エンジンでの読み取りは未確認(疑似サーバーのみ)。PDF を描画して画像化する機能は無いので、JPEG/Flate 以外の画像(JBIG2・CCITT・JPX 等)のスキャンPDFは読めない。
+
+**English**
+- **Drag and drop**: a "Maid Cafe: Drop job files" view in the Explorer accepts files from the VS Code explorer or the OS; the command "Drop job files (drag & drop import)" opens a webview drop zone (md, txt, docx, pdf; several at once; unsupported types are skipped with a warning). Files go to the current project (asks for a name if none).
+- **OCR for image-only PDFs**: when a PDF yields no text, its embedded images (JPEG, or 8-bit Gray/RGB Flate images re-encoded as PNG; up to 16 pages) are sent to aruaru-llm's versionless Connect `POST /aruaru_llm.Llm/Ocr` (no new REST; `x-tenant: maid-cafe-vsc`). Unreachable, 404 or 503 show the reason and "check `maidCafe.aruaruUrl` or paste the text".
+- **Tests (measured)**: `npm test` 17 pass; `npm run test:vscode` 6 pass in real VS Code 1.148.0 (uri-list drop, webview file drop, OCR of an image-only PDF, drop webview opens).
+- **Unverified / limits**: a real mouse drag is not reproduced by automated tests. **Production `https://maid-cafe.tokyo/aruaru_llm.Llm/Ocr` returns 404 as of 2026-11-27**, so with default settings OCR shows the error; point `maidCafe.aruaruUrl` at an aruaru-llm that serves OCR. Real OCR-engine output is unverified (mock server only). There is no PDF rasterizer, so scans using JBIG2, CCITT, JPX etc. cannot be read.

@@ -161,3 +161,70 @@ test('engagement type (freelance / dispatch / employee) is guessed from job text
   assert.deepStrictEqual(P.classifyEngagement('Rust engineer'), []);
   assert.ok(P.importHeader('派遣', 'url').includes('engagement=dispatch'));
 });
+
+// --- 画像だけの PDF の OCR(aruaru-llm の版なし Connect `/aruaru_llm.Llm/Ocr`)---
+const http = require('node:http');
+const zlibT = require('node:zlib');
+const { extractPdfImages, encodePng, buildOcrRequest, parseOcrResponse, ocrImages } = require('../out/core/ocr');
+const { extractText } = require('../out/core/extract');
+const { makeImageOnlyPdf } = require('./helpers/scanpdf');
+
+test('extractPdfImages finds JPEG and Flate gray images', () => {
+  const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 0x0a, 0x65, 0xff, 0xd9]);
+  const j = extractPdfImages(makeImageOnlyPdf({ kind: 'jpeg', jpeg }));
+  assert.strictEqual(j.length, 1);
+  assert.strictEqual(j[0].mime, 'image/jpeg');
+  assert.ok(j[0].data.equals(jpeg), 'jpeg bytes intact (even with a newline inside)');
+  const g = extractPdfImages(makeImageOnlyPdf({ kind: 'gray', w: 4, h: 2 }));
+  assert.strictEqual(g.length, 1);
+  assert.strictEqual(g[0].mime, 'image/png');
+  assert.ok(g[0].data.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])));
+});
+
+test('encodePng writes valid IHDR and filtered rows', () => {
+  const png = encodePng(2, 2, 1, Buffer.from([1, 2, 3, 4]));
+  assert.strictEqual(png.readUInt32BE(16), 2);
+  assert.strictEqual(png.readUInt32BE(20), 2);
+  const idatLen = png.readUInt32BE(33);
+  assert.strictEqual(png.subarray(37, 41).toString('latin1'), 'IDAT');
+  assert.deepStrictEqual([...zlibT.inflateSync(png.subarray(41, 41 + idatLen))], [0, 1, 2, 0, 3, 4]);
+});
+
+test('OCR request is versionless Connect and response is parsed', () => {
+  const r = buildOcrRequest('http://x/', [{ mime: 'image/png', data: Buffer.from('ab') }]);
+  assert.strictEqual(r.url, 'http://x/aruaru_llm.Llm/Ocr');
+  assert.ok(!r.url.includes('.v1'));
+  assert.deepStrictEqual(JSON.parse(r.body).images_base64, ['YWI=']);
+  assert.strictEqual(parseOcrResponse({ pages: [{ lines: [{ text: 'a' }, { text: 'b' }] }, { lines: [{ text: 'c' }] }] }), 'a\nb\n\nc');
+});
+
+test('image-only PDF: OCR via mock aruaru-llm, clear errors when OCR is missing or unreachable', async () => {
+  const seen = [];
+  const srv = http.createServer((req, res) => {
+    let b = '';
+    req.on('data', (c) => (b += c));
+    req.on('end', () => {
+      seen.push({ url: req.url, body: JSON.parse(b || '{}') });
+      if (req.url !== '/aruaru_llm.Llm/Ocr') {
+        res.statusCode = 404;
+        return res.end();
+      }
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ pages: [{ lines: [{ text: 'スキャンした案件: Rust エンジニア募集' }] }] }));
+    });
+  });
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${srv.address().port}`;
+  try {
+    const pdf = makeImageOnlyPdf({ kind: 'gray' });
+    const text = await extractText('scan.pdf', pdf, (imgs) => ocrImages(base, imgs));
+    assert.ok(text.includes('Rust エンジニア募集'));
+    assert.strictEqual(seen[0].url, '/aruaru_llm.Llm/Ocr');
+    assert.strictEqual(seen[0].body.images_base64.length, 1);
+    await assert.rejects(extractText('scan.pdf', pdf), /only images; OCR is needed/);
+    await assert.rejects(extractText('scan.pdf', pdf, (imgs) => ocrImages(base + '/nope', imgs)), /OCR failed \(this server has no OCR\)/);
+  } finally {
+    srv.close();
+  }
+  await assert.rejects(ocrImages('http://127.0.0.1:1', [{ mime: 'image/png', data: Buffer.from('x') }]), /could not be reached/);
+});
