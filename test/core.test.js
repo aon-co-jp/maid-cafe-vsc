@@ -228,3 +228,36 @@ test('image-only PDF: OCR via mock aruaru-llm, clear errors when OCR is missing 
   }
   await assert.rejects(ocrImages('http://127.0.0.1:1', [{ mime: 'image/png', data: Buffer.from('x') }]), /could not be reached/);
 });
+
+// --- プログラマー向けアンケート ---
+const sv = require('../out/core/survey');
+
+test('survey: similar names resolve, documents are detected, ambiguous words are not', () => {
+  assert.strictEqual(sv.resolveTech('リアクト').id, 'react');
+  assert.strictEqual(sv.resolveTech('React.js').id, 'react');
+  assert.strictEqual(sv.resolveTech('ｒｅａｃｔ').id, 'react');
+  assert.strictEqual(sv.resolveTech('Express.js').id, 'express');
+  assert.strictEqual(sv.resolveTech('スプリング ブート').id, 'spring');
+  const r = sv.resolveTechList('パイソン、FastAPI, foo');
+  assert.deepStrictEqual(r.techs.map((t) => t.id), ['python', 'fastapi']);
+  assert.deepStrictEqual(r.unknown, ['foo']);
+  const d = sv.detectTechs('必須: TypeScript / React.js(Next.js)、バックエンドは Python と FastAPI、DB は PostgreSQL。');
+  for (const id of ['typescript', 'react', 'nextjs', 'python', 'fastapi', 'sql']) assert.ok(d.includes(id), id);
+  assert.ok(!d.includes('java'), 'JavaScript-free text has no Java');
+  assert.deepStrictEqual(sv.detectTechs('We go to the office and react quickly; no rust on the express train.'), []);
+  assert.ok(sv.detectTechs('JavaScript only').includes('javascript') && !sv.detectTechs('JavaScript only').includes('java'));
+  assert.ok(sv.detectTechs('Java 17 と Spring Boot').includes('java'));
+});
+
+test('survey: level-based instruction and safe parsing', () => {
+  const s = sv.newSurvey(['python', 'react'], { python: 'veteran', react: 'novice' }, 'mixed');
+  const on = sv.surveyInstruction(s, 'implement', true);
+  assert.ok(on.includes('Python: Veteran') && on.includes('React: Absolute beginner'));
+  assert.ok(on.includes('very small numbered steps'), 'lowest level drives step size');
+  const off = sv.surveyInstruction(s, 'implement', false);
+  assert.ok(off.includes('PROJECT STACK') && !off.includes('numbered steps'));
+  assert.strictEqual(sv.surveyInstruction(undefined, 'design', true), '');
+  assert.deepStrictEqual(sv.parseSurvey(JSON.stringify({ techs: ['go'], levels: { go: 'advanced', x: 'god' } })).levels, { go: 'advanced' });
+  assert.strictEqual(sv.parseSurvey('{bad'), undefined);
+  assert.deepStrictEqual(sv.LEVELS.map((l) => l.ja), ['超初心者', '初心者', '中級者', '上級者', 'ベテラン']);
+});

@@ -35,5 +35,6 @@
   "wt.desc": "Colour, ask, import a job, practise English.",
   "cmd.dropPanel": "Maid Cafe: Drop job files (drag & drop import)",
   "cmd.importDropped": "Maid Cafe: Import dropped files",
-  "view.dropZone": "Maid Cafe: Drop job files"
+  "view.dropZone": "Maid Cafe: Drop job files",
+  "cmd.survey": "Maid Cafe: Programmer survey (languages, frameworks and your level)"
 }

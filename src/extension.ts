@@ -3,6 +3,7 @@ import { PALETTE, ColorId, RangeStore, MarkedRange } from './core/ranges';
 import { Conversation, Turn } from './core/chat';
 import { extractText, fileKind } from './core/extract';
 import { ocrImages } from './core/ocr';
+import { TECHS, LEVELS, LevelId, Survey, detectTechs, resolveTechList, techLabel, surveyInstruction, newSurvey, parseSurvey } from './core/survey';
 import { Language, EnglishLevel, findLanguage, LANGUAGES, buildTranslateRequest, parseTranslateResponse, looksPoor, translateKeepingCode, englishCafeSystem, parseCafeReply } from './core/translate';
 import { Stage, STAGES, learningInstruction, checkFetchUrl, htmlToText, projectDir, slugify, importHeader } from './core/project';
 import { redact as redactSecrets } from './core/redact';
@@ -547,6 +548,78 @@ async function projectContext(name: string): Promise<MarkedRange[]> {
   return out;
 }
 
+interface SurveyArgs {
+  /** 技術の指定(id・表示名・類似語。文字列ならカンマ区切り)。省略時は資料から判定し、選択画面を出す。 */
+  techs?: string[] | string;
+  /** 技術ごとのレベル(id または 日本語/英語の表示名)。 */
+  levels?: Record<string, string>;
+}
+
+async function readSurvey(name: string): Promise<Survey | undefined> {
+  const t = await readIfExists(vscode.Uri.joinPath(wsRoot()!, projectDir(name), 'survey.json'));
+  return t ? parseSurvey(t) : undefined;
+}
+
+function toLevelId(v: string | undefined): LevelId | undefined {
+  if (!v) return undefined;
+  const n = v.trim().toLowerCase();
+  return LEVELS.find((l) => l.id === n || l.ja === v.trim() || l.en.toLowerCase() === n)?.id;
+}
+
+/** プログラマー向けアンケート: 言語・フレームワークの判定/選択と、それぞれのレベル。案件フォルダーの survey.json に保存。 */
+async function runSurvey(ctx: vscode.ExtensionContext, a: SurveyArgs = {}): Promise<Survey | undefined> {
+  const name = await currentProject(ctx);
+  if (!name || !wsRoot()) {
+    vscode.window.showInformationMessage('Import job/project information first ("Maid Cafe: Import job / project information").');
+    return undefined;
+  }
+  const prev = await readSurvey(name);
+  const detected = detectTechs((await projectContext(name)).map((r) => r.text).join('\n'));
+  let techs: string[];
+  let source: Survey['source'] = 'manual';
+  if (a.techs !== undefined) {
+    const list = Array.isArray(a.techs) ? a.techs.join(',') : a.techs;
+    const r = resolveTechList(list);
+    if (r.unknown.length) vscode.window.showWarningMessage(`Unknown language/framework: ${r.unknown.join(', ')}`);
+    techs = r.techs.map((t) => t.id);
+  } else {
+    const preset = new Set(prev?.techs ?? detected);
+    const items: (vscode.QuickPickItem & { id?: string })[] = TECHS.map((t) => ({ label: t.label, description: `${t.kind}${detected.includes(t.id) ? ' · found in your documents' : ''}`, id: t.id, picked: preset.has(t.id) }));
+    items.push({ label: '$(edit) Type a name (e.g. リアクト, React.js)...', alwaysShow: true });
+    const picked = await vscode.window.showQuickPick(items, { canPickMany: true, placeHolder: detected.length ? `Found: ${detected.map(techLabel).join(', ')}. Confirm or change.` : 'Choose the languages and frameworks used in this job' });
+    if (!picked) return undefined;
+    techs = picked.filter((p) => p.id).map((p) => p.id!);
+    if (picked.some((p) => !p.id)) {
+      const typed = await vscode.window.showInputBox({ prompt: 'Languages / frameworks (comma separated; similar names are OK)', ignoreFocusOut: true });
+      if (typed) {
+        const r = resolveTechList(typed);
+        if (r.unknown.length) vscode.window.showWarningMessage(`Unknown language/framework: ${r.unknown.join(', ')}`);
+        for (const t of r.techs) if (!techs.includes(t.id)) techs.push(t.id);
+      }
+    }
+    source = techs.length && techs.every((t) => detected.includes(t)) ? 'detected' : detected.some((d) => techs.includes(d)) ? 'mixed' : 'manual';
+  }
+  if (a.techs === undefined && !techs.length) return undefined;
+  const levels: Record<string, LevelId> = {};
+  for (const id of techs) {
+    const given = a.levels && (a.levels[id] ?? a.levels[techLabel(id)]);
+    let lv = toLevelId(given);
+    if (!lv && !a.levels) {
+      const p = await vscode.window.showQuickPick(
+        LEVELS.map((l) => ({ label: `${l.ja} / ${l.en}`, id: l.id, picked: prev?.levels[id] === l.id })),
+        { placeHolder: `Your level in ${techLabel(id)}` + (prev?.levels[id] ? ` (last time: ${LEVELS.find((l) => l.id === prev.levels[id])?.ja})` : '') },
+      );
+      lv = p?.id;
+    }
+    lv ??= prev?.levels[id];
+    if (lv) levels[id] = lv;
+  }
+  const s = newSurvey(techs, levels, a.techs !== undefined ? (techs.every((t) => detected.includes(t)) ? 'detected' : 'manual') : source);
+  await writeProjectFile(name, 'survey.json', JSON.stringify(s, null, 2) + '\n');
+  vscode.window.showInformationMessage(`Saved: ${techs.map((t) => `${techLabel(t)} (${LEVELS.find((l) => l.id === levels[t])?.ja ?? '?'})`).join(', ') || 'no technologies'}`);
+  return s;
+}
+
 interface StageArgs {
   stage?: Stage;
   input?: string; // 実装したい内容 / 貼り付けるエラー・ログ
@@ -578,7 +651,7 @@ async function runStage(ctx: vscode.ExtensionContext, a: StageArgs = {}): Promis
   const question = input ? `${s.ask}\n\nUser input:\n${cfg().get('redactSecrets', true) ? redactSecrets(input) : input}` : s.ask;
   const ans = await ask(ctx, [...code, ...(await projectContext(name))], question, false, {
     personal: cfg().get('redactPersonal', true),
-    extraSystem: learningInstruction(stage, cfg().get('learningMode', true)),
+    extraSystem: learningInstruction(stage, cfg().get('learningMode', true)) + surveyInstruction(await readSurvey(name), stage, cfg().get('learningMode', true)),
   });
   if (ans === undefined) return undefined;
   if (s.file) {
@@ -639,6 +712,7 @@ export function activate(ctx: vscode.ExtensionContext): { store: RangeStore; las
     vscode.commands.registerCommand('maidCafe.project._dropMessage', (m: { files?: { name: string; data: number[] }[]; uris?: string[] }, name?: string) => importDropped(ctx, dropMessageToItems(m), name)),
     vscode.commands.registerCommand('maidCafe.project._handleDrop', async (dt: vscode.DataTransfer, name?: string) => importDropped(ctx, await dataTransferToItems(dt), name)),
     vscode.window.createTreeView('maidCafe.dropZone', { treeDataProvider: dropZone, dragAndDropController: dropZone }),
+    vscode.commands.registerCommand('maidCafe.project.survey', (a?: SurveyArgs) => runSurvey(ctx, a)),
     vscode.commands.registerCommand('maidCafe.project.step', (a?: StageArgs) => runStage(ctx, a)),
     vscode.commands.registerCommand('maidCafe.selectThirdLanguage', async (code?: string) => {
       const l = code ? findLanguage(code) : (await vscode.window.showQuickPick(LANGUAGES.map((x) => ({ label: `${x.native} (${x.name})`, description: x.code, l: x })), { placeHolder: 'Third language (shown next to every answer)' }))?.l;

@@ -165,6 +165,27 @@ suite('maid-cafe-vsc in real VS Code', () => {
     fs.rmSync(path.join(root, '.maid-cafe/projects/Drop-Job'), { recursive: true, force: true });
   });
 
+  test('programmer survey: detect from documents, similar-name input, levels saved and used by the steps', async () => {
+    const fs = require('node:fs');
+    const root = vscode.workspace.workspaceFolders[0].uri.fsPath;
+    await vscode.commands.executeCommand('maidCafe.project.import', { name: 'Survey Job', kind: 'text', value: '案件: TypeScript と React.js で画面、API は FastAPI' });
+    const s1 = await vscode.commands.executeCommand('maidCafe.project.survey', { techs: 'TypeScript, リアクト, ファストAPI', levels: { typescript: '中級者', react: '超初心者', fastapi: 'veteran' } });
+    assert.deepStrictEqual(s1.techs, ['typescript', 'react', 'fastapi']);
+    assert.deepStrictEqual(s1.levels, { typescript: 'intermediate', react: 'novice', fastapi: 'veteran' });
+    assert.strictEqual(s1.source, 'detected', 'all chosen techs were also found in the documents');
+    const file = path.join(root, '.maid-cafe/projects/Survey-Job/survey.json');
+    assert.ok(fs.existsSync(file));
+    // 次回: レベルを指定しなければ保存済みのレベルを使う
+    const s2 = await vscode.commands.executeCommand('maidCafe.project.survey', { techs: ['React'], levels: {} });
+    assert.deepStrictEqual(s2.levels, { react: 'novice' });
+    await vscode.commands.executeCommand('maidCafe.project.survey', { techs: 'TypeScript, React', levels: { typescript: 'advanced', react: 'beginner' } });
+    const n0 = received.length;
+    await vscode.commands.executeCommand('maidCafe.project.step', { stage: 'design' });
+    const p = received[n0].body.prompt;
+    assert.ok(p.includes('TypeScript: Advanced') && p.includes('React: Beginner') && p.includes('learns while developing'), 'design step adapts to the saved levels');
+    fs.rmSync(path.join(root, '.maid-cafe/projects/Survey-Job'), { recursive: true, force: true });
+  });
+
   test('url import refuses non-http and credentials', async () => {
     const { checkFetchUrl } = require('../../../out/core/project');
     assert.strictEqual(checkFetchUrl('file:///etc/passwd').ok, false);

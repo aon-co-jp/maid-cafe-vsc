@@ -91,3 +91,18 @@ Purpose, rules and open items as above: pure logic lives in `src/core/`; no new 
 - **OCR for image-only PDFs**: when a PDF yields no text, its embedded images (JPEG, or 8-bit Gray/RGB Flate images re-encoded as PNG; up to 16 pages) are sent to aruaru-llm's versionless Connect `POST /aruaru_llm.Llm/Ocr` (no new REST; `x-tenant: maid-cafe-vsc`). Unreachable, 404 or 503 show the reason and "check `maidCafe.aruaruUrl` or paste the text".
 - **Tests (measured)**: `npm test` 17 pass; `npm run test:vscode` 6 pass in real VS Code 1.148.0 (uri-list drop, webview file drop, OCR of an image-only PDF, drop webview opens).
 - **Unverified / limits**: a real mouse drag is not reproduced by automated tests. **Production `https://maid-cafe.tokyo/aruaru_llm.Llm/Ocr` returns 404 as of 2026-11-27**, so with default settings OCR shows the error; point `maidCafe.aruaruUrl` at an aruaru-llm that serves OCR. Real OCR-engine output is unverified (mock server only). There is no PDF rasterizer, so scans using JBIG2, CCITT, JPX etc. cannot be read.
+
+## 2026-11-27 プログラマー向けアンケート / Programmer survey
+**日本語**
+- コマンド「プログラマー向けアンケート」: 取り込んだ資料(仕様書・設計書・URL・貼り付けた本文)から、案件で使う言語・フレームワークを自動で判定し、選択画面で印を付けて出す(31種類)。資料が無くても、マウスで選ぶか、類似語で入力できる(例「リアクト」「React.js」「ｒｅａｃｔ」→ React、「パイソン」→ Python)。go・rust・react などの一般の英単語は、大文字で始まるときだけ技術名とみなす。
+- 言語・フレームワークごとにレベルを選ぶ: 超初心者・初心者・中級者・上級者・ベテラン。結果は案件フォルダーの `survey.json` に保存し、次回は前回のレベルを初期値として使う。
+- 要件→設計→タスク→実装→レビュー→DEBUG の各段階で、保存した技術とレベルを AI への指示に加える。学習モードが有効なら、一番低いレベルに合わせて説明の詳しさ・手順の細かさ・最後の課題を変える(超初心者=用語をすべて説明し1動作ずつの手順+小さな課題、ベテラン=気づきにくい危険だけ指摘+任意の挑戦課題)。新しい REST は作っていない(AI 呼び出しは既存の版なし Connect)。
+- 試験(実測): `npm test` 19件成功(類似語の解決・資料からの判定・一般語を誤判定しないこと・レベル別の指示・保存形式)。`npm run test:vscode` 7件成功(実 VS Code: 類似語入力→保存→次回の再利用→設計段階の指示に反映)。
+- 未確認: 選択画面をマウスで操作する流れ(試験は引数で指定)。実際の AI がレベルに応じて説明を変えるかの品質(疑似サーバーでは指示が送られることだけ確認)。
+
+**English**
+- Command "Programmer survey": detects the job's languages and frameworks (31 entries) from imported documents (specs, designs, URLs, pasted text) and pre-checks them in a picker. Without documents, pick with the mouse or type a similar name (e.g. "リアクト", "React.js", full-width "ｒｅａｃｔ" -> React). Common English words such as go, rust, react only count when capitalized.
+- Choose a level per technology: absolute beginner, beginner, intermediate, advanced, veteran. Saved to `survey.json` in the project folder; next time the previous levels are the defaults.
+- Every step (requirements, design, tasks, implement, review, debug) adds the saved stack and levels to the AI instruction; with learning mode on, the lowest level sets how detailed the explanation, how small the steps and what the closing practice task is. No new REST (AI calls stay on the existing versionless Connect).
+- Tests (measured): `npm test` 19 pass; `npm run test:vscode` 7 pass in real VS Code (similar-name input, save, reuse, design prompt adapts).
+- Unverified: the mouse-driven picker flow (tests pass arguments), and whether a real AI actually adapts its answers (the mock only confirms the instruction is sent).

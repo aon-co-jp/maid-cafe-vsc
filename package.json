@@ -111,6 +111,10 @@
       {
         "command": "maidCafe.project.importDropped",
         "title": "%cmd.importDropped%"
+      },
+      {
+        "command": "maidCafe.project.survey",
+        "title": "%cmd.survey%"
       }
     ],
     "menus": {
