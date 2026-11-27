@@ -127,3 +127,27 @@ test('translate: languages, code-preserving split, request shapes, poor-output c
   assert.strictEqual(T.parseCafeReply('just text').maid, 'just text');
   assert.ok(T.englishCafeSystem('beginner').includes('maid cafe'));
 });
+
+test('script check flags output that is not in the target writing system; file kinds', async () => {
+  const L = T.findLanguage;
+  assert.ok(T.looksPoor('Please restart the server now', 'Please restart the server now!', L('ru')));
+  assert.ok(T.looksPoor('Please restart the server now', 'Bitte starten Sie den Server neu', L('ar')));
+  assert.ok(!T.looksPoor('Please restart the server now', 'Пожалуйста, перезапустите сервер сейчас', L('ru')));
+  assert.ok(!T.looksPoor('Please restart the server now', '请现在重新启动服务器', L('zh')));
+  const X = require('../out/core/extract');
+  assert.deepStrictEqual(['a.MD', 'b.docx', 'c.pdf', 'd.exe'].map(X.fileKind), ['text', 'docx', 'pdf', 'unsupported']);
+  await assert.rejects(X.extractText('d.exe', new Uint8Array(1)));
+});
+
+test('every %key% in package.json exists in the English and Japanese nls files; walkthrough files exist', () => {
+  const fs = require('fs'), path = require('path');
+  const root = path.join(__dirname, '..');
+  const pkg = fs.readFileSync(path.join(root, 'package.json'), 'utf8');
+  const en = JSON.parse(fs.readFileSync(path.join(root, 'package.nls.json'), 'utf8'));
+  const ja = JSON.parse(fs.readFileSync(path.join(root, 'package.nls.ja.json'), 'utf8'));
+  const keys = [...pkg.matchAll(/"%([\w.]+)%"/g)].map((m) => m[1]).concat([...pkg.matchAll(/%([\w.]+)%/g)].map((m) => m[1]));
+  assert.ok(keys.length > 20);
+  for (const k of new Set(keys)) assert.ok(en[k] && ja[k], k);
+  for (const s of JSON.parse(pkg).contributes.walkthroughs[0].steps) assert.ok(fs.existsSync(path.join(root, s.media.markdown)));
+  for (const c of JSON.parse(pkg).contributes.commands) assert.ok(c.title.startsWith('%'), c.command);
+});

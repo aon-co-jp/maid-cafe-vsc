@@ -45,7 +45,7 @@ suite('maid-cafe-vsc in real VS Code', () => {
   test('commands are registered', async () => {
     const all = await vscode.commands.getCommands(true);
     for (const c of ['paintSelection', 'askAboutColor', 'askSelection', 'followUp', 'explain', 'fix', 'writeTests']) assert.ok(all.includes(`maidCafe.${c}`), c);
-    for (const c of ['openArurau', 'project.import', 'project.step']) assert.ok(all.includes(`maidCafe.${c}`), c);
+    for (const c of ['openArurau', 'project.import', 'project.step', 'welcome', 'selectThirdLanguage', 'translateSelection', 'englishCafe']) assert.ok(all.includes(`maidCafe.${c}`), c);
   });
 
   test('paint -> ask -> follow-up -> fix with diff apply', async () => {
@@ -98,6 +98,20 @@ suite('maid-cafe-vsc in real VS Code', () => {
     assert.ok(!sent.includes('yamada@example.com') && !sent.includes('03-1234-5678') && !sent.includes('80万円') && !sent.includes('山田太郎'), 'personal info masked: ' + sent);
     assert.ok(sent.includes('LEARNING MODE'), 'learning mode asks for Why');
     assert.ok(fs.readFileSync(path.join(root, '.maid-cafe/projects/Demo-Job/requirements.md'), 'utf8').includes('Why:'));
+
+    // docx / pdf import, then requirements -> design -> tasks chain (each step sees the previous result)
+    await vscode.commands.executeCommand('maidCafe.project.import', { name: 'Demo Job', kind: 'file', value: vscode.Uri.file(path.resolve(root, 'spec.docx')) });
+    await vscode.commands.executeCommand('maidCafe.project.import', { name: 'Demo Job', kind: 'file', value: vscode.Uri.file(path.resolve(root, 'spec.pdf')) });
+    assert.strictEqual(fs.readdirSync(src).length, 5);
+    const all = fs.readdirSync(src).map((f) => fs.readFileSync(path.join(src, f), 'utf8')).join(String.fromCharCode(10));
+    assert.ok(all.includes('FastAPI の経験') && all.includes('Freelance Rust engineer wanted'), 'docx and pdf text extracted');
+    const d0 = received.length;
+    await vscode.commands.executeCommand('maidCafe.project.step', { stage: 'design' });
+    const designPrompt = received[d0].body.prompt;
+    assert.ok(designPrompt.includes('draft a design document') && designPrompt.includes('# Requirements') && designPrompt.includes('FastAPI の経験') && designPrompt.includes('Freelance Rust engineer wanted'), 'design sees requirements + all imports');
+    assert.ok(fs.existsSync(path.join(root, '.maid-cafe/projects/Demo-Job/design.md')));
+    await vscode.commands.executeCommand('maidCafe.project.step', { stage: 'tasks' });
+    assert.ok(received[received.length - 1].body.prompt.includes('implementation tasks') && fs.existsSync(path.join(root, '.maid-cafe/projects/Demo-Job/tasks.md')));
 
     const file = vscode.Uri.file(path.resolve(root, 'sample.js'));
     const doc = await vscode.workspace.openTextDocument(file);

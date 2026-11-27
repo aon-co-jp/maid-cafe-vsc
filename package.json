@@ -1,7 +1,7 @@
 {
   "name": "maid-cafe-vsc",
-  "displayName": "Maid Cafe Code Helper",
-  "description": "Pick a colour, mark code ranges with the mouse or cursor, and ask AI (aruaru-llm + aruaru-search, ChatGPT, Gemini, DeepSeek, Grok, Claude) about them. Includes maid-cafe.tokyo Q&A and the programming school.",
+  "displayName": "%displayName%",
+  "description": "%description%",
   "version": "0.1.0",
   "publisher": "aon-co-jp",
   "license": "MIT",
@@ -14,7 +14,9 @@
     "Other"
   ],
   "main": "./out/extension.js",
-  "activationEvents": [],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "scripts": {
     "compile": "tsc -p .",
     "test": "tsc -p . && node --test test/core.test.js",
@@ -24,79 +26,83 @@
     "commands": [
       {
         "command": "maidCafe.paintSelection",
-        "title": "Maid Cafe: Mark selection with a colour"
+        "title": "%cmd.paintSelection%"
       },
       {
         "command": "maidCafe.askAboutColor",
-        "title": "Maid Cafe: Ask AI about a colour's ranges"
+        "title": "%cmd.askAboutColor%"
       },
       {
         "command": "maidCafe.askSelection",
-        "title": "Maid Cafe: Ask AI about the selection"
+        "title": "%cmd.askSelection%"
       },
       {
         "command": "maidCafe.followUp",
-        "title": "Maid Cafe: Ask a follow-up question"
+        "title": "%cmd.followUp%"
       },
       {
         "command": "maidCafe.explain",
-        "title": "Maid Cafe: Explain the selection"
+        "title": "%cmd.explain%"
       },
       {
         "command": "maidCafe.fix",
-        "title": "Maid Cafe: Fix the selection (show diff, then apply)"
+        "title": "%cmd.fix%"
       },
       {
         "command": "maidCafe.writeTests",
-        "title": "Maid Cafe: Write tests for the selection"
+        "title": "%cmd.writeTests%"
       },
       {
         "command": "maidCafe.clearColors",
-        "title": "Maid Cafe: Clear colour marks"
+        "title": "%cmd.clearColors%"
       },
       {
         "command": "maidCafe.setApiKey",
-        "title": "Maid Cafe: Set an AI provider API key"
+        "title": "%cmd.setApiKey%"
       },
       {
         "command": "maidCafe.selectProvider",
-        "title": "Maid Cafe: Choose the AI provider"
+        "title": "%cmd.selectProvider%"
       },
       {
         "command": "maidCafe.openQA",
-        "title": "Maid Cafe: Open maid-cafe.tokyo Q&A"
+        "title": "%cmd.openQA%"
       },
       {
         "command": "maidCafe.openSchool",
-        "title": "Maid Cafe: Open the programming school"
+        "title": "%cmd.openSchool%"
       },
       {
         "command": "maidCafe.openArurau",
-        "title": "Maid Cafe: Open audiocafe.tokyo arurau (IT job / project matching)"
+        "title": "%cmd.openArurau%"
       },
       {
         "command": "maidCafe.project.import",
-        "title": "Maid Cafe: Import job / project information (URL, text, md/txt file)"
+        "title": "%cmd.project.import%"
       },
       {
         "command": "maidCafe.project.step",
-        "title": "Maid Cafe: Project step (requirements, design, tasks, code, review, debug)"
+        "title": "%cmd.project.step%"
       },
       {
         "command": "maidCafe.selectThirdLanguage",
-        "title": "Maid Cafe: Choose the third language (translation)"
+        "title": "%cmd.selectThirdLanguage%"
       },
       {
         "command": "maidCafe.translateSelection",
-        "title": "Maid Cafe: Translate the selection (native-like)"
+        "title": "%cmd.translateSelection%"
       },
       {
         "command": "maidCafe.englishCafe",
-        "title": "Maid Cafe: English conversation (maid cafe)"
+        "title": "%cmd.englishCafe%"
       },
       {
         "command": "maidCafe.englishCafe.reset",
-        "title": "Maid Cafe: Restart the English conversation"
+        "title": "%cmd.englishCafe.reset%"
+      },
+      {
+        "command": "maidCafe.welcome",
+        "title": "%cmd.welcome%"
       }
     ],
     "menus": {
@@ -139,7 +145,7 @@
       "explorer/context": [
         {
           "command": "maidCafe.project.import",
-          "when": "resourceExtname =~ /\\.(md|markdown|txt)$/",
+          "when": "resourceExtname =~ /\\.(md|markdown|txt|docx|pdf)$/",
           "group": "maidCafe@1"
         }
       ]
@@ -283,7 +289,71 @@
           "description": "English level of the maid-cafe conversation."
         }
       }
-    }
+    },
+    "walkthroughs": [
+      {
+        "id": "maidCafe.welcome",
+        "title": "%wt.title%",
+        "description": "%wt.desc%",
+        "steps": [
+          {
+            "id": "color",
+            "title": "%wt.color.title%",
+            "description": "%wt.color.desc%",
+            "media": {
+              "markdown": "walkthrough/color.md"
+            },
+            "completionEvents": [
+              "onCommand:maidCafe.paintSelection"
+            ]
+          },
+          {
+            "id": "ask",
+            "title": "%wt.ask.title%",
+            "description": "%wt.ask.desc%",
+            "media": {
+              "markdown": "walkthrough/ask.md"
+            },
+            "completionEvents": [
+              "onCommand:maidCafe.askSelection"
+            ]
+          },
+          {
+            "id": "provider",
+            "title": "%wt.provider.title%",
+            "description": "%wt.provider.desc%",
+            "media": {
+              "markdown": "walkthrough/provider.md"
+            },
+            "completionEvents": [
+              "onCommand:maidCafe.selectProvider"
+            ]
+          },
+          {
+            "id": "project",
+            "title": "%wt.project.title%",
+            "description": "%wt.project.desc%",
+            "media": {
+              "markdown": "walkthrough/project.md"
+            },
+            "completionEvents": [
+              "onCommand:maidCafe.project.import"
+            ]
+          },
+          {
+            "id": "english",
+            "title": "%wt.english.title%",
+            "description": "%wt.english.desc%",
+            "media": {
+              "markdown": "walkthrough/english.md"
+            },
+            "completionEvents": [
+              "onCommand:maidCafe.englishCafe"
+            ]
+          }
+        ]
+      }
+    ]
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",
@@ -292,5 +362,9 @@
     "@vscode/test-electron": "^2.5.2",
     "mocha": "^12.0.3",
     "typescript": "^5.6.0"
+  },
+  "dependencies": {
+    "mammoth": "^1.13.0",
+    "pdf-parse": "^1.1.1"
   }
 }

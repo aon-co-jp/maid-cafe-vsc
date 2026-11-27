@@ -36,3 +36,15 @@ Purpose, rules and open items as above: pure logic lives in `src/core/`; no new 
 - Added: `core/translate.ts` (about 40 languages, code-preserving translation, request shapes, poor-output check, maid English prompt and reply parsing), commands `selectThirdLanguage` / `translateSelection` / `englishCafe` / `englishCafe.reset`, settings `thirdLanguage` / `translateFallbackProvider` / `englishLevel`.
 - Reused assets: aruaru-llm's `Translate` (`{text,target_lang(ISO),source_lang,tenant}` → `{translation,engine,disclosure}`) and `tools/translate-worker` (M2M100 418M + CTranslate2), nothing rebuilt. M2M100 license=mit confirmed on the HuggingFace model card. **NLLB (CC-BY-NC) is not used.**
 - Tests: 10 unit + 5 real-VS-Code (3 passes in a row). Fixed a test flake caused by leftover workspace/settings by using a fresh temp dir per run. Unverified: translation through a public aruaru-llm or the real provider APIs (mock server only).
+
+## 2026-11-27(4) pdf/docx・設計の連鎖試験・ガイド・日本語画面 / pdf/docx, chain test, walkthrough, nls
+### 日本語
+- 追加: `core/extract.ts`(md/txt/docx=mammoth/pdf=pdf-parse)。**実VS Codeで pdf.js が拡張ホスト内で失敗**したため、PDF は別の Node プロセス(`core/pdfChild.ts`、`ELECTRON_RUN_AS_NODE`)で読む方式に変更して直した。取り込み後の 要件→設計→タスク の連鎖(各段階が前の成果物と全資料を見る)を実試験。
+- 修正: 回答パネルが操作中のエディターのフォーカスを奪い、直後の Fix が空振りする不具合(実VS Code試験のちらつきで発見)→ `preserveFocus`。
+- 追加: 初回ガイド(walkthrough)、`package.nls.json` / `package.nls.ja.json`、翻訳の「文字体系チェック」。試験: 単体12件、実VS Code5件(3回連続成功)。
+- 未了は README「未確認・未実施・未了」に一覧化。
+### English
+- Added `core/extract.ts` (md/txt, docx via mammoth, pdf via pdf-parse). **pdf.js failed inside the real VS Code extension host**, so PDFs are read in a separate Node process (`core/pdfChild.ts`, `ELECTRON_RUN_AS_NODE`) — fixed. The requirements → design → tasks chain after import (each step sees the previous output and all sources) is tested in real VS Code.
+- Fixed: the answer panel stole focus from the editor so a following Fix did nothing (found as a flaky real-VS-Code test) → `preserveFocus`.
+- Added: first-run walkthrough, `package.nls.json` / `package.nls.ja.json`, a writing-system check for translations. Tests: 12 unit, 5 real VS Code (3 passes in a row).
+- Remaining work is listed in the README ("Unverified / not done").

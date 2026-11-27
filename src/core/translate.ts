@@ -118,11 +118,22 @@ export function parseTranslateResponse(provider: ProviderId, j: any): string | n
   return parseResponse(provider, j);
 }
 
+/** 文字体系が決まっている言語の、期待する文字(出力にこれが 1 字も無ければ別の言語になっている)。 */
+const SCRIPT: Record<string, RegExp> = {
+  ja: /[぀-ヿ一-鿿]/, zh: /[一-鿿]/, ko: /[가-힯]/,
+  ru: /[Ѐ-ӿ]/, uk: /[Ѐ-ӿ]/, mn: /[Ѐ-ӿ]/,
+  ar: /[؀-ۿ]/, fa: /[؀-ۿ]/, ur: /[؀-ۿ]/, he: /[֐-׿]/,
+  hi: /[ऀ-ॿ]/, ne: /[ऀ-ॿ]/, bn: /[ঀ-৿]/, ta: /[஀-௿]/,
+  th: /[฀-๿]/, el: /[Ͱ-Ͽ]/, my: /[က-႟]/, km: /[ក-៿]/,
+};
+
 /** 無料の翻訳の出来が悪そうか(空・原文のまま・長さが極端・同じ語の繰り返し)。悪ければ利用者の鍵の AI に切り替える材料にする。 */
 export function looksPoor(source: string, output: string | null | undefined, target: Language): boolean {
   if (!output || !output.trim()) return true;
   const o = output.trim();
   const s = source.trim();
+  const sc = SCRIPT[target.code];
+  if (sc && /[A-Za-z]{4,}/.test(s) && !sc.test(o)) return true; // 別の文字体系のまま
   if (target.code !== 'en' && o === s && /[A-Za-z]{4,}/.test(s)) return true;
   const ratio = o.length / Math.max(1, s.length);
   if (s.length > 20 && (ratio < 0.2 || ratio > 6)) return true;

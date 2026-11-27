@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { PALETTE, ColorId, RangeStore, MarkedRange } from './core/ranges';
 import { Conversation, Turn } from './core/chat';
+import { extractText, fileKind } from './core/extract';
 import { Language, EnglishLevel, findLanguage, LANGUAGES, buildTranslateRequest, parseTranslateResponse, looksPoor, translateKeepingCode, englishCafeSystem, parseCafeReply } from './core/translate';
 import { Stage, STAGES, learningInstruction, checkFetchUrl, htmlToText, projectDir, slugify } from './core/project';
 import { redact as redactSecrets } from './core/redact';
@@ -67,7 +68,7 @@ const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&l
 /** 会話全体を 1 つのパネルに表示する。 */
 function showConversation(title: string): void {
   if (!panel) {
-    panel = vscode.window.createWebviewPanel('maidCafeAnswer', title, vscode.ViewColumn.Beside, { enableScripts: false });
+    panel = vscode.window.createWebviewPanel('maidCafeAnswer', title, { viewColumn: vscode.ViewColumn.Beside, preserveFocus: true }, { enableScripts: false });
     panel.onDidDispose(() => (panel = undefined));
   }
   panel.title = title;
@@ -258,7 +259,7 @@ async function translateText(ctx: vscode.ExtensionContext, text: string, target:
 
 function showCafe(): void {
   if (!cafePanel) {
-    cafePanel = vscode.window.createWebviewPanel('maidCafeEnglish', 'Maid Cafe English', vscode.ViewColumn.Beside, { enableScripts: false });
+    cafePanel = vscode.window.createWebviewPanel('maidCafeEnglish', 'Maid Cafe English', { viewColumn: vscode.ViewColumn.Beside, preserveFocus: true }, { enableScripts: false });
     cafePanel.onDidDispose(() => (cafePanel = undefined));
   }
   const body = cafeLog.map((l) => `<h4>${esc(l.who)}</h4><pre style="white-space:pre-wrap;font-family:var(--vscode-font-family)">${esc(l.body)}</pre>`).join('');
@@ -374,7 +375,7 @@ async function importMaterial(ctx: vscode.ExtensionContext, a: ImportArgs = {}):
         [
           { label: 'Paste a URL', id: 'url' as const, description: 'fetched once after you confirm' },
           { label: 'Paste text (from the clipboard)', id: 'text' as const },
-          { label: 'Choose a file (md / txt)', id: 'file' as const, description: 'pdf / docx: not supported yet' },
+          { label: 'Choose a file (md / txt / docx / pdf)', id: 'file' as const, description: 'text is extracted locally; scanned PDFs (images) are not read' },
         ],
         { placeHolder: 'Import job / project information' },
       )
@@ -392,13 +393,9 @@ async function importMaterial(ctx: vscode.ExtensionContext, a: ImportArgs = {}):
     text = typeof a.value === 'string' ? a.value : await vscode.env.clipboard.readText();
   } else {
     let f: vscode.Uri | undefined = a.value instanceof vscode.Uri ? a.value : undefined;
-    f ??= (await vscode.window.showOpenDialog({ canSelectMany: false, filters: { 'Text / Markdown': ['md', 'txt', 'markdown'] } }))?.[0];
+    f ??= (await vscode.window.showOpenDialog({ canSelectMany: false, filters: { 'Job info': ['md', 'txt', 'markdown', 'docx', 'pdf'] } }))?.[0];
     if (!f) return undefined;
-    if (!/\.(md|markdown|txt)$/i.test(f.path)) {
-      vscode.window.showWarningMessage('Only .md / .txt can be imported for now (pdf and docx are not supported yet).');
-      return undefined;
-    }
-    text = dec.decode(await vscode.workspace.fs.readFile(f));
+if (fileKind(f.path) === 'unsupported') {      vscode.window.showWarningMessage('Supported files: md, txt, docx, pdf.');      return undefined;    }    try {      text = await extractText(f.path, await vscode.workspace.fs.readFile(f));    } catch (e) {      vscode.window.showWarningMessage('Could not read the file: ' + (e as Error).message);      return undefined;    }
   }
   if (!text || !text.trim()) {
     vscode.window.showWarningMessage('Nothing to import.');
@@ -471,6 +468,11 @@ async function runStage(ctx: vscode.ExtensionContext, a: StageArgs = {}): Promis
 }
 
 export function activate(ctx: vscode.ExtensionContext): { store: RangeStore; lastAnswer: () => string | undefined } {
+  // 初回だけ、はじめてのガイドを開く(試験中は開かない)。
+  if (ctx.extensionMode !== vscode.ExtensionMode.Test && !ctx.globalState.get('maidCafe.welcomed')) {
+    void ctx.globalState.update('maidCafe.welcomed', true);
+    void vscode.commands.executeCommand('maidCafe.welcome');
+  }
   ctx.subscriptions.push(
     vscode.workspace.registerTextDocumentContentProvider(SCHEME, { provideTextDocumentContent: (u) => proposals.get(u.query) ?? '' }),
     vscode.commands.registerCommand('maidCafe.paintSelection', async (colorArg?: ColorId) => {
@@ -529,6 +531,7 @@ export function activate(ctx: vscode.ExtensionContext): { store: RangeStore; las
       cafeConv.clear();
       cafeLog.length = 0;
     }),
+    vscode.commands.registerCommand('maidCafe.welcome', () => vscode.commands.executeCommand('workbench.action.openWalkthrough', `${ctx.extension.id}#maidCafe.welcome`, false)),
     vscode.commands.registerCommand('maidCafe.clearColors', () => {
       store.clear();
       repaint(vscode.window.activeTextEditor);
