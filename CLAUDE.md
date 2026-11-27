@@ -60,3 +60,11 @@ Purpose, rules and open items as above: pure logic lives in `src/core/`; no new 
 - Fixed: the answer panel stole focus from the editor so a following Fix did nothing (found as a flaky real-VS-Code test) → `preserveFocus`.
 - Added: first-run walkthrough, `package.nls.json` / `package.nls.ja.json`, a writing-system check for translations. Tests: 12 unit, 5 real VS Code (3 passes in a row).
 - Remaining work is listed in the README ("Unverified / not done").
+
+## 2026-11-27(5) 0.2.0 の .vsix・配備・翻訳測定の結果 / 0.2.0 vsix, deployment, translation measurement result
+### 日本語
+- `package.json` を 0.2.0 にし、`@vscode/vsce package` で .vsix を作成(約10MB、SHA-256 `50c7a61b…49b0`)。展開して PDF/docx 読み込みを確認。サーバー(conoha)の `/var/www/maid-cafe-download/vsc/` に置き、旧 0.1.0 と旧 index.html は `vsc-backup/` に退避。ダウンロードのハッシュ一致を確認。紹介ページを 0.2.0 に更新。GitHub Release は未作成(公開操作のため本人確認待ち)。
+- 翻訳の実測は環境の制約(torch 変換不可)でできず、未測定と明記。
+### English
+- Bumped to 0.2.0 and built the .vsix with `@vscode/vsce package` (about 10 MB, SHA-256 `50c7a61b…49b0`); verified PDF/docx reading from the unpacked package. Placed in `/var/www/maid-cafe-download/vsc/` on conoha; the old 0.1.0 and old index.html moved to `vsc-backup/`. The downloaded hash matches. The intro page now says 0.2.0. No GitHub Release yet (public action; waiting for the user's confirmation).
+- Real translation measurement was not possible (no torch conversion environment); recorded as unmeasured.

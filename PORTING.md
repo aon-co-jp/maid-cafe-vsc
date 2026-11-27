@@ -60,3 +60,11 @@ Purpose, rules and open items as above: pure logic lives in `src/core/`; no new 
 ## 完成まで作り切る方針 / Finish everything policy (2026-11-27)
 **日本語**: 全リポジトリで、**未確認は自動で確認し、未実施は実施し、未了は完成させる**(確認を求めず進める)。使用頻度が低いと判断される機能や、**1から作り直す大規模開発になる内容でも、やめずに最後まで開発・TEST・DEBUGする**(別の方式で済ませない、後回しにしない)。進め方: 調査(英語・日本語の検索とGitHub) → 設計 → 実装 → 実機/実データで確認 → 失敗は原因を直して再試験 → README・CLAUDE・PORTING・POLICY を日英で更新 → push。「できた」と書くのは実測した範囲だけ、確認できなかった所は「未確認」と正直に書く。例外(確認を取る): 元に戻せない削除、秘密の公開、所有者の認証・決済・実機操作が要るもの、利用者のシステム設定の変更。
 **English**: In every repository, **verify what is unverified, do what is not yet done, and finish what is unfinished** automatically, without asking. Even features that look rarely used, or work that means **a large rewrite from scratch, are developed, tested and debugged to the end** (no substituting another approach, no postponing). Method: research (English and Japanese search plus GitHub) -> design -> implement -> verify on real devices or data -> fix causes and retest on failure -> update README, CLAUDE, PORTING and POLICY in Japanese and English -> push. Write "done" only for what was measured, and say "unverified" honestly for the rest. Exceptions that still need confirmation: irreversible deletions, publishing secrets, anything needing the owner's authentication, payment or real-device actions, and changes to the user's system settings.
+
+## 2026-11-27(5) 0.2.0 の .vsix・配備・翻訳測定の結果 / 0.2.0 vsix, deployment, translation measurement result
+### 日本語
+- `package.json` を 0.2.0 にし、`@vscode/vsce package` で .vsix を作成(約10MB、SHA-256 `50c7a61b…49b0`)。展開して PDF/docx 読み込みを確認。サーバー(conoha)の `/var/www/maid-cafe-download/vsc/` に置き、旧 0.1.0 と旧 index.html は `vsc-backup/` に退避。ダウンロードのハッシュ一致を確認。紹介ページを 0.2.0 に更新。GitHub Release は未作成(公開操作のため本人確認待ち)。
+- 翻訳の実測は環境の制約(torch 変換不可)でできず、未測定と明記。
+### English
+- Bumped to 0.2.0 and built the .vsix with `@vscode/vsce package` (about 10 MB, SHA-256 `50c7a61b…49b0`); verified PDF/docx reading from the unpacked package. Placed in `/var/www/maid-cafe-download/vsc/` on conoha; the old 0.1.0 and old index.html moved to `vsc-backup/`. The downloaded hash matches. The intro page now says 0.2.0. No GitHub Release yet (public action; waiting for the user's confirmation).
+- Real translation measurement was not possible (no torch conversion environment); recorded as unmeasured.

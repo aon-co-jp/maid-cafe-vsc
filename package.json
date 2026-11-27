@@ -2,7 +2,7 @@
   "name": "maid-cafe-vsc",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "aon-co-jp",
   "license": "MIT",
   "engines": {
@@ -366,5 +366,9 @@
   "dependencies": {
     "mammoth": "^1.13.0",
     "pdf-parse": "^1.1.1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/aon-co-jp/maid-cafe-vsc.git"
   }
 }

@@ -34,6 +34,15 @@ ITエンジニアの案件・求人マッチングのページ(フリーラン�
 - **メイドカフェ英会話**(**English conversation (maid cafe)**、レベルは `maidCafe.englishLevel`): メイドの口調で英語の練習相手になり、間違いは「Correction」で**やさしく直し**、日本語訳も付きます(第3言語を選んでいればその訳も)。**Restart** で履歴を消します。
 - 正直な注意: 無料の aruaru-llm(GPT-2 系)の会話は短く質が低いので、本格的に練習するときは有料AI(自分の契約)と上のフォールバック設定をおすすめします。翻訳の `Translate` 経路も、公開ホスト確定までは `maidCafe.aruaruUrl` の指定が要ります(今は疑似サーバーで試験)。
 
+## 配布(プレビュー .vsix)
+`maid-cafe-vsc-0.2.0.vsix`(約10MB、署名なし): https://maid-cafe.tokyo/download/vsc/maid-cafe-vsc-0.2.0.vsix / SHA-256 `50c7a61b4709253fa2b2e6c100e09f4900653610ec2e376cce07a0e1ea6b49b0`(ダウンロードして一致を確認済み)。作り方: `npm run compile && npx @vscode/vsce package`。展開したパッケージで PDF/docx の読み込みが動くことを確認済み。旧 0.1.0 はサーバーの `vsc-backup/` に退避。**GitHub Release は未作成**(公開の操作なので、ユーザー本人の確認待ち)。
+
+## 翻訳品質の測定(試みと結果)
+測定を試みましたが**できていません**: 公式の M2M100 418M は PyTorch の約1.9GB の重みで、CTranslate2 形式への変換に torch が要ります。この環境は Python 3.14 で pip が無く、変換環境を用意できませんでした。したがって中・韓・西・仏・独・露・アラビア語などの**実際の訳の質は未測定**で、「強い/弱い言語」は書けません(推測では書きません)。測定は、`translate-worker` が動く環境(変換済みモデルのある VPS など)で `maidCafe.aruaruUrl` を向けて行う必要があります。弱い言語への備え(文字体系チェック+自分の鍵のAIへの自動切替)は実装済みで、切替の判定は単体試験済み、**実AIでの切替は未試験**(AI各社の鍵が無いため)。
+
+## 通し試験と学習モードの質
+案件取り込み(URL・テキスト・md・docx・pdf)→要件→設計→タスク→デバッグ(差分適用)は、実VS Code の自動試験で通しで動作確認済みです(疑似AI)。学習モードは「Why」を求める指示を送ることまで確認済みで、**実際のAIが返す説明の質は未確認**です。
+
 ## 初回ガイドと日本語画面
 初回起動時に「はじめてのガイド」(色つけ→質問→AI選択→案件取り込み→英会話)が開きます(コマンド **Open the getting-started guide** でいつでも)。コマンド名・説明は VS Code の表示言語に合わせて日本語/英語(`package.nls*.json`)。設定項目の説明と実行中のメッセージは**まだ英語のみ**です。
 
@@ -42,7 +51,7 @@ ITエンジニアの案件・求人マッチングのページ(フリーラン�
 - 品質が足りないときの備え(実装済み): 出力が空・原文のまま・極端な長さ・繰り返し・**期待する文字体系になっていない**(例: ロシア語を頼んだのにラテン文字のまま)なら、`maidCafe.translateFallbackProvider` の AI(自分の鍵)で自動的にやり直します。
 
 ## 未確認・未実施・未了(洗い出し)
-- 未確認: 各社の実 API(ChatGPT・Gemini・DeepSeek・Grok・Claude)への通信 / 公開された aruaru-llm(会話・翻訳とも。`maidCafe.aruaruUrl` 待ち)/ 翻訳品質(上記)/ マーケットプレイスからのインストール(`.vsix` の作り直しと配布はまだ)。
+- 未確認: 各社の実 API(ChatGPT・Gemini・DeepSeek・Grok・Claude)への通信 / 公開された aruaru-llm(会話・翻訳とも。`maidCafe.aruaruUrl` 待ち)/ 翻訳品質(上記)/ マーケットプレイス公開と GitHub Release(`.vsix` は上記のとおり配布済み)。
 - 未了: ドラッグ&ドロップでの取り込み / 画像PDFのOCR / 設定の説明と実行時メッセージの日本語化 / 応答のストリーミング / 利用量と費用の表示 / 教室の課題を VS Code 内で自動採点 / 送信ログ / ローカルモデル / open-vsc-claude のスタック選択の移植(計画のみ)。
 
 ## 現状(正直な記録)
@@ -77,11 +86,17 @@ A VS Code extension: select code with the mouse or cursor, **mark it with any co
 
 **Maid-cafe English and third-language translation**: pick a **third language** (`maidCafe.thirdLanguage`, command *Choose the third language*) from about 40 world languages besides Japanese and English, and every **AI answer and English-conversation reply** is also shown in it, written as a native speaker would. *Translate the selection* does the same for any text (e.g. school explanations). **Code blocks are never translated.** Free translation = aruaru-llm's translation worker (M2M100 418M, **MIT**, license checked on the model card); paid = your own provider asked for native-quality translation (follows the chosen provider). If the free output is empty, unchanged, extreme in length or repetitive, it retries with `maidCafe.translateFallbackProvider` (your own saved key). **NLLB (CC-BY-NC) is not used.** *English conversation (maid cafe)* (level: `maidCafe.englishLevel`) makes the AI a maid-cafe partner who **gently corrects** your English, adds a Japanese gloss (and the third language), and keeps history; *Restart* clears it. Honest note: the free aruaru-llm (GPT-2 class) chat is short and weak, so use a paid AI plus the fallback setting for serious practice; the `Translate` route also needs `maidCafe.aruaruUrl` until the public host is fixed (tested with a mock server).
 
+**Distribution (preview .vsix)**: `maid-cafe-vsc-0.2.0.vsix` (about 10 MB, unsigned): https://maid-cafe.tokyo/download/vsc/maid-cafe-vsc-0.2.0.vsix, SHA-256 `50c7a61b4709253fa2b2e6c100e09f4900653610ec2e376cce07a0e1ea6b49b0` (downloaded and matched). Build: `npm run compile && npx @vscode/vsce package`. PDF/docx reading was verified from the unpacked package. The old 0.1.0 is kept in `vsc-backup/` on the server. **No GitHub Release is created yet** (it is a public action, waiting for the user's own confirmation).
+
+**Translation quality measurement (attempted, not achieved)**: the official M2M100 418M is a ~1.9 GB PyTorch checkpoint and conversion to CTranslate2 needs torch; this environment has Python 3.14 and no pip, so no conversion environment could be set up. The **real quality for Chinese, Korean, Spanish, French, German, Russian, Arabic etc. is therefore unmeasured**, and no "strong/weak" list is given (no guessing). Measuring needs an environment where `translate-worker` runs (e.g. a VPS with the converted model) with `maidCafe.aruaruUrl` pointed at it. The safety net for weak languages (writing-system check + automatic switch to your own provider key) is implemented; the decision logic is unit-tested, but a **real switch to a paid AI is untested** (no provider keys here).
+
+**End-to-end and learning mode**: import (URL, text, md, docx, pdf) → requirements → design → tasks → debug (diff apply) is verified end to end in real VS Code (mock AI). For learning mode, only that the "Why" instruction is sent is verified; the **quality of a real AI's explanations is unchecked**.
+
 **First-run guide and Japanese UI**: a getting-started walkthrough opens on first launch (also via *Open the getting-started guide*). Command names and descriptions follow VS Code's display language (Japanese/English, `package.nls*.json`); setting descriptions and runtime messages are **still English only**.
 
 **Translation quality (honest)**: about 40 third languages are selectable, including Chinese, Korean, Spanish, French, German, Russian and Arabic. **Real translation quality is not measured yet**: there is no converted M2M100 (CTranslate2) model in this environment and no public aruaru-llm translate route, so only mock-server behaviour is tested. Weak languages will be listed here once measured (M2M100 418M is generally weaker for low-resource languages, long text and jargon). Safety net (implemented): if the output is empty, unchanged, extreme in length, repetitive, or **not in the expected writing system** (e.g. Russian requested but Latin letters returned), it retries with `maidCafe.translateFallbackProvider` (your own key).
 
-**Unverified / not done**: *unverified* — the real provider APIs; a public aruaru-llm (chat and translation, waiting for `maidCafe.aruaruUrl`); translation quality; marketplace install (the `.vsix` is not rebuilt/published yet). *Not done* — drag-and-drop import, OCR for image PDFs, Japanese setting descriptions/runtime messages, streaming, usage/cost display, auto-graded school exercises, a sent-data log, local models, porting open-vsc-claude's stack picker (plan only).
+**Unverified / not done**: *unverified* — the real provider APIs; a public aruaru-llm (chat and translation, waiting for `maidCafe.aruaruUrl`); translation quality; marketplace publishing and a GitHub Release (the `.vsix` itself is distributed as above). *Not done* — drag-and-drop import, OCR for image PDFs, Japanese setting descriptions/runtime messages, streaming, usage/cost display, auto-graded school exercises, a sent-data log, local models, porting open-vsc-claude's stack picker (plan only).
 
 **Status (honest)**: 12 unit tests (`npm test`) and **5 automated tests that launch real VS Code (the official download), passing 3 runs in a row** (incl. import → requirements → debug apply, personal-data masking, third-language translation and the English chat; each run uses a fresh temp workspace) (`npm run test:vscode`) pass: extension loads, commands registered, colour → saved range → question → follow-up (history is sent) → fix applied. The aruaru side was a **local mock server**; no sound is played. The aruaru-llm response shape is **confirmed from its source**: request `{prompt, max_new_tokens (max 128), tenant}`, response `{completion, engine, disclosure}`; `parseResponse` now reads `completion`. **Not yet verified**: the real provider APIs, and a **live call to a public aruaru-llm URL**: `https://maid-cafe.tokyo/aruaru_llm.Llm/Generate` and the `.v1` path both return 404 (maid-cafe.tokyo is an info site without this route) and `https://aruaru.tokyo` returns 405; set `maidCafe.aruaruUrl` until the public host is fixed. aruaru-llm's versionless migration is in progress elsewhere (its source still serves `/aruaru_llm.v1.Llm/`). aruaru-llm (GPT-2 class) suits English and answers briefly (max 128 tokens); pick a paid AI (your own contract) for better answers.
 
