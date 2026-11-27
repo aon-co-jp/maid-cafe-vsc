@@ -1,5 +1,7 @@
 import * as vscode from 'vscode';
-import { PALETTE, ColorId, RangeStore } from './core/ranges';
+import { PALETTE, ColorId, RangeStore, MarkedRange } from './core/ranges';
+import { Conversation } from './core/chat';
+import { ACTIONS, ActionId, extractCodeBlock, replaceLines } from './core/actions';
 import { buildPrompt } from './core/prompt';
 import { PROVIDERS, ProviderId, buildRequest, parseResponse, explainError } from './core/providers';
 
@@ -51,70 +53,156 @@ async function getKey(ctx: vscode.ExtensionContext, p: ProviderId): Promise<stri
   return k?.trim();
 }
 
-function showAnswer(title: string, question: string, answer: string): void {
-  const panel = vscode.window.createWebviewPanel('maidCafeAnswer', title, vscode.ViewColumn.Beside, { enableScripts: false });
-  const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
-  panel.webview.html = `<!doctype html><html><body style="font-family:var(--vscode-font-family);padding:12px"><h3>${esc(question)}</h3><pre style="white-space:pre-wrap;font-family:var(--vscode-editor-font-family)">${esc(answer)}</pre></body></html>`;
+const conversation = new Conversation();
+let panel: vscode.WebviewPanel | undefined;
+let lastRanges: MarkedRange[] = [];
+let lastAnswer: string | undefined;
+
+const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
+
+/** 会話全体を 1 つのパネルに表示する。 */
+function showConversation(title: string): void {
+  if (!panel) {
+    panel = vscode.window.createWebviewPanel('maidCafeAnswer', title, vscode.ViewColumn.Beside, { enableScripts: false });
+    panel.onDidDispose(() => (panel = undefined));
+  }
+  panel.title = title;
+  const body = conversation
+    .all()
+    .map((t) => `<h4>${t.role === 'user' ? 'You' : 'AI'}</h4><pre style="white-space:pre-wrap;font-family:var(--vscode-editor-font-family)">${esc(t.content)}</pre>`)
+    .join('');
+  panel.webview.html = `<!doctype html><html><body style="font-family:var(--vscode-font-family);padding:12px">${body}<p><i>Maid Cafe: Ask a follow-up question</i></p></body></html>`;
 }
 
-async function ask(ctx: vscode.ExtensionContext, ranges: ReturnType<RangeStore['all']>): Promise<void> {
+/** 質問を送って答えを返す(失敗時は undefined)。続きの質問は conversation に積む。 */
+async function ask(ctx: vscode.ExtensionContext, ranges: MarkedRange[], questionArg?: string, followUp = false): Promise<string | undefined> {
   if (!ranges.length) {
     vscode.window.showInformationMessage('No code is marked. Select code and run "Maid Cafe: Mark selection with a colour" first.');
-    return;
+    return undefined;
   }
-  const question = await vscode.window.showInputBox({ prompt: 'Question for the AI', ignoreFocusOut: true });
-  if (!question) return;
+  const question = questionArg ?? (await vscode.window.showInputBox({ prompt: followUp ? 'Follow-up question' : 'Question for the AI', ignoreFocusOut: true }));
+  if (!question) return undefined;
   const provider = cfg().get<ProviderId>('provider', 'aruaru');
   const key = await getKey(ctx, provider);
-  if (key === undefined || (PROVIDERS.find((p) => p.id === provider)!.needsKey && !key)) return;
+  if (key === undefined || (PROVIDERS.find((p) => p.id === provider)!.needsKey && !key)) return undefined;
   const bp = buildPrompt({ question, ranges, redactSecrets: cfg().get('redactSecrets', true), maxChars: cfg().get('maxContextChars', 12000), language: vscode.env.language });
   if (cfg().get('confirmBeforeSend', true)) {
     const ok = await vscode.window.showWarningMessage(`Send ${bp.sentChars} characters of code to ${provider}${bp.truncated ? ' (truncated)' : ''}?`, { modal: true }, 'Send');
-    if (ok !== 'Send') return;
+    if (ok !== 'Send') return undefined;
   }
+  if (!followUp) conversation.clear();
+  lastRanges = ranges;
   const models = cfg().get<Record<string, string>>('models', {});
-  const req = buildRequest({ provider, key, model: models[provider], system: bp.system, user: bp.user, aruaruUrl: cfg().get('aruaruUrl') });
-  await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Asking ${provider}…` }, async () => {
+  const req = buildRequest({ provider, key, model: models[provider], system: bp.system, user: followUp ? question : bp.user, aruaruUrl: cfg().get('aruaruUrl'), history: conversation.all() });
+  return vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Asking ${provider}…` }, async () => {
     try {
       const res = await fetch(req.url, { method: 'POST', headers: req.headers, body: req.body });
       const text = await res.text();
       if (!res.ok) {
         vscode.window.showErrorMessage(explainError(res.status, text));
-        return;
+        return undefined;
       }
       const ans = parseResponse(provider, JSON.parse(text));
-      if (!ans) vscode.window.showErrorMessage('The answer could not be read (unexpected format).');
-      else showAnswer(`AI: ${provider}`, question, ans);
+      if (!ans) {
+        vscode.window.showErrorMessage('The answer could not be read (unexpected format).');
+        return undefined;
+      }
+      conversation.add('user', followUp ? question : `${bp.user}`);
+      conversation.add('assistant', ans);
+      lastAnswer = ans;
+      showConversation(`AI: ${provider}`);
+      return ans;
     } catch (e) {
       vscode.window.showErrorMessage(`Network error: ${(e as Error).message}`);
+      return undefined;
     }
   });
 }
 
-export function activate(ctx: vscode.ExtensionContext): void {
+/** 今の選択を、行全体に広げた範囲として取る。 */
+function wholeLineSelection(ed: vscode.TextEditor): { range: MarkedRange; uri: vscode.Uri } {
+  const sel = ed.selection;
+  const start = sel.start.line;
+  const end = sel.end.character === 0 && sel.end.line > start ? sel.end.line - 1 : sel.end.line;
+  const text = ed.document.getText(new vscode.Range(start, 0, end, ed.document.lineAt(end).text.length));
+  return { uri: ed.document.uri, range: { id: 0, color: 'yellow', file: vscode.workspace.asRelativePath(ed.document.uri), startLine: start + 1, endLine: end + 1, text } };
+}
+
+const proposals = new Map<string, string>();
+const SCHEME = 'maidcafe-proposal';
+
+/** AI の修正案を差分で見せ、承認されたら適用する。 */
+async function proposeFix(uri: vscode.Uri, startLine: number, endLine: number, oldText: string, answer: string, autoApply: boolean): Promise<'applied' | 'rejected' | 'stale' | 'no-code'> {
+  const code = extractCodeBlock(answer);
+  if (code === null) {
+    vscode.window.showWarningMessage('The answer has no code block to apply.');
+    return 'no-code';
+  }
+  const doc = await vscode.workspace.openTextDocument(uri);
+  const next = replaceLines(doc.getText(), startLine, endLine, code, oldText);
+  if (next === null) {
+    vscode.window.showWarningMessage('The code changed since the question was asked; the proposal was not applied.');
+    return 'stale';
+  }
+  const key = `${uri.path}#${Date.now()}`;
+  proposals.set(key, next);
+  const right = vscode.Uri.from({ scheme: SCHEME, path: uri.path, query: key });
+  if (!autoApply) {
+    await vscode.commands.executeCommand('vscode.diff', uri, right, `AI proposal: ${vscode.workspace.asRelativePath(uri)}`);
+    const ok = await vscode.window.showInformationMessage('Apply the AI proposal to this file?', { modal: true }, 'Apply');
+    if (ok !== 'Apply') return 'rejected';
+  }
+  const edit = new vscode.WorkspaceEdit();
+  edit.replace(uri, new vscode.Range(0, 0, doc.lineCount, 0), next);
+  const done = await vscode.workspace.applyEdit(edit);
+  return done ? 'applied' : 'rejected';
+}
+
+async function runAction(ctx: vscode.ExtensionContext, id: ActionId, autoApply = false): Promise<unknown> {
+  const ed = vscode.window.activeTextEditor;
+  if (!ed || ed.selection.isEmpty) {
+    vscode.window.showInformationMessage('Select some code first.');
+    return undefined;
+  }
+  const { range, uri } = wholeLineSelection(ed);
+  const ans = await ask(ctx, [range], ACTIONS[id].question);
+  if (ans === undefined) return undefined;
+  if (id === 'fix') return proposeFix(uri, range.startLine, range.endLine, range.text, ans, autoApply);
+  return ans;
+}
+
+export function activate(ctx: vscode.ExtensionContext): { store: RangeStore; lastAnswer: () => string | undefined } {
   ctx.subscriptions.push(
-    vscode.commands.registerCommand('maidCafe.paintSelection', async () => {
+    vscode.workspace.registerTextDocumentContentProvider(SCHEME, { provideTextDocumentContent: (u) => proposals.get(u.query) ?? '' }),
+    vscode.commands.registerCommand('maidCafe.paintSelection', async (colorArg?: ColorId) => {
       const ed = vscode.window.activeTextEditor;
       if (!ed || ed.selection.isEmpty) return;
-      const c = await pickColor('Pick a colour for this range');
+      const c = colorArg ?? (await pickColor('Pick a colour for this range'));
       if (!c) return;
       for (const sel of ed.selections.filter((s) => !s.isEmpty)) {
         store.add(c, ed.document.uri.toString(), sel.start.line + 1, sel.end.line + 1, ed.document.getText(sel));
       }
       repaint(ed);
+      return store.byColor(c).length;
     }),
-    vscode.commands.registerCommand('maidCafe.askAboutColor', async () => {
+    vscode.commands.registerCommand('maidCafe.askAboutColor', async (colorArg?: ColorId, question?: string) => {
       const used = store.colorsInUse();
       if (!used.length) return vscode.window.showInformationMessage('No colours are in use yet.');
-      const c = await pickColor('Ask about which colour?', used);
-      if (c) await ask(ctx, store.byColor(c));
+      const c = colorArg ?? (await pickColor('Ask about which colour?', used));
+      if (c) return ask(ctx, store.byColor(c), question);
     }),
-    vscode.commands.registerCommand('maidCafe.askSelection', async () => {
+    vscode.commands.registerCommand('maidCafe.askSelection', async (question?: string) => {
       const ed = vscode.window.activeTextEditor;
       if (!ed || ed.selection.isEmpty) return;
-      const sel = ed.selection;
-      await ask(ctx, [{ id: 0, color: 'yellow', file: vscode.workspace.asRelativePath(ed.document.uri), startLine: sel.start.line + 1, endLine: sel.end.line + 1, text: ed.document.getText(sel) }]);
+      return ask(ctx, [wholeLineSelection(ed).range], question);
     }),
+    vscode.commands.registerCommand('maidCafe.followUp', async (question?: string) => {
+      if (!conversation.length) return vscode.window.showInformationMessage('Ask a question first.');
+      return ask(ctx, lastRanges, question, true);
+    }),
+    vscode.commands.registerCommand('maidCafe.explain', async () => runAction(ctx, 'explain')),
+    vscode.commands.registerCommand('maidCafe.fix', async (opts?: { autoApply?: boolean }) => runAction(ctx, 'fix', opts?.autoApply ?? false)),
+    vscode.commands.registerCommand('maidCafe.writeTests', async () => runAction(ctx, 'test')),
     vscode.commands.registerCommand('maidCafe.clearColors', () => {
       store.clear();
       repaint(vscode.window.activeTextEditor);
@@ -141,6 +229,7 @@ export function activate(ctx: vscode.ExtensionContext): void {
       repaint(vscode.window.visibleTextEditors.find((x) => x.document === e.document));
     }),
   );
+  return { store, lastAnswer: () => lastAnswer };
 }
 
 export function deactivate(): void {

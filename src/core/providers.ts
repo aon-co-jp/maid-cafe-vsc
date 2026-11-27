@@ -1,4 +1,5 @@
 /** 各AIへの要求の組み立てと、応答の取り出し。通信そのものはしない(試験しやすいように純粋関数にしてある)。 */
+import { Turn, flattenTurns } from './chat';
 export type ProviderId = 'aruaru' | 'openai' | 'gemini' | 'deepseek' | 'grok' | 'claude';
 
 export const PROVIDERS: { id: ProviderId; label: string; free: boolean; needsKey: boolean; model: string }[] = [
@@ -24,6 +25,7 @@ export interface BuildArgs {
   user: string;
   aruaruUrl?: string;
   maxTokens?: number;
+  history?: Turn[]; // これまでの会話(続きの質問)
 }
 
 const OPENAI_LIKE: Partial<Record<ProviderId, string>> = {
@@ -39,6 +41,7 @@ export function defaultModel(p: ProviderId): string {
 export function buildRequest(a: BuildArgs): Req {
   const model = a.model || defaultModel(a.provider);
   const max = a.maxTokens ?? 2048;
+  const msgs: Turn[] = [...(a.history ?? []), { role: 'user', content: a.user }];
   const json = { 'content-type': 'application/json' };
   if (a.provider === 'aruaru') {
     // 版なしの Connect 呼び出し(REST は使わない)。1 つの文字列にまとめて送る。
@@ -46,14 +49,15 @@ export function buildRequest(a: BuildArgs): Req {
     return {
       url: `${base}/aruaru_llm.Llm/Generate`,
       headers: { ...json, 'x-tenant': 'maid-cafe-vsc' },
-      body: JSON.stringify({ prompt: `${a.system}\n\n${a.user}`, max_new_tokens: Math.min(max, 512) }),
+      // 応答は `completion`(ソース確認済み)。生成の上限は 128 トークン。
+      body: JSON.stringify({ prompt: flattenTurns(a.system, a.history ?? [], a.user), max_new_tokens: Math.min(max, 128), tenant: 'maid-cafe-vsc' }),
     };
   }
   if (a.provider === 'claude') {
     return {
       url: 'https://api.anthropic.com/v1/messages',
       headers: { ...json, 'x-api-key': a.key ?? '', 'anthropic-version': '2023-06-01' },
-      body: JSON.stringify({ model, max_tokens: max, system: a.system, messages: [{ role: 'user', content: a.user }] }),
+      body: JSON.stringify({ model, max_tokens: max, system: a.system, messages: msgs }),
     };
   }
   if (a.provider === 'gemini') {
@@ -62,7 +66,7 @@ export function buildRequest(a: BuildArgs): Req {
       headers: { ...json, 'x-goog-api-key': a.key ?? '' }, // 鍵は URL に載せずヘッダーで送る
       body: JSON.stringify({
         systemInstruction: { parts: [{ text: a.system }] },
-        contents: [{ role: 'user', parts: [{ text: a.user }] }],
+        contents: msgs.map((t) => ({ role: t.role === 'user' ? 'user' : 'model', parts: [{ text: t.content }] })),
         generationConfig: { maxOutputTokens: max },
       }),
     };
@@ -71,14 +75,14 @@ export function buildRequest(a: BuildArgs): Req {
   return {
     url,
     headers: { ...json, authorization: `Bearer ${a.key ?? ''}` },
-    body: JSON.stringify({ model, max_tokens: max, messages: [{ role: 'system', content: a.system }, { role: 'user', content: a.user }] }),
+    body: JSON.stringify({ model, max_tokens: max, messages: [{ role: 'system', content: a.system }, ...msgs] }),
   };
 }
 
 /** 応答 JSON から本文を取り出す。取り出せなければ null。 */
 export function parseResponse(provider: ProviderId, j: any): string | null {
   try {
-    if (provider === 'aruaru') return j.text ?? j.output ?? j.generated_text ?? null;
+    if (provider === 'aruaru') return j.completion ?? j.text ?? j.output ?? j.generated_text ?? null;
     if (provider === 'claude') return (j.content as any[]).filter((c) => c.type === 'text').map((c) => c.text).join('') || null;
     if (provider === 'gemini') return j.candidates[0].content.parts.map((p: any) => p.text ?? '').join('') || null;
     return j.choices[0].message.content ?? null;

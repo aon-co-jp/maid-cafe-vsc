@@ -61,3 +61,30 @@ test('response parsing and error text', () => {
   assert.ok(explainError(401, 'x').includes('API key'));
   assert.ok(explainError(429, 'x').includes('429'));
 });
+
+const { Conversation, flattenTurns } = require('../out/core/chat');
+const { extractCodeBlock, replaceLines } = require('../out/core/actions');
+
+test('aruaru response is read from completion; history is flattened; tokens capped at 128', () => {
+  assert.strictEqual(parseResponse('aruaru', { completion: 'hi', engine: 'e', disclosure: 'd' }), 'hi');
+  const r = buildRequest({ provider: 'aruaru', system: 'S', user: 'U2', history: [{ role: 'user', content: 'U1' }, { role: 'assistant', content: 'A1' }], maxTokens: 4096 });
+  const b = JSON.parse(r.body);
+  assert.ok(b.prompt.includes('U1') && b.prompt.includes('A1') && b.prompt.endsWith('User: U2'));
+  assert.strictEqual(b.max_new_tokens, 128);
+  assert.strictEqual(JSON.parse(buildRequest({ provider: 'claude', system: 'S', user: 'U2', key: 'k', history: [{ role: 'user', content: 'U1' }, { role: 'assistant', content: 'A1' }] }).body).messages.length, 3);
+});
+
+test('conversation keeps a bounded user-first history', () => {
+  const c = new Conversation(3);
+  for (let i = 0; i < 4; i++) { c.add('user', 'q' + i); c.add('assistant', 'a' + i); }
+  assert.ok(c.length <= 3 && c.all()[0].role === 'user');
+  assert.ok(flattenTurns('S', [], 'Q').includes('User: Q'));
+});
+
+test('extractCodeBlock and replaceLines (stale proposals are refused)', () => {
+  assert.strictEqual(extractCodeBlock('x\n```js\nlet a = 1;\n```\ny'), 'let a = 1;');
+  assert.strictEqual(extractCodeBlock('no code'), null);
+  const t = 'a\r\nb\r\nc\r\nd';
+  assert.strictEqual(replaceLines(t, 2, 3, 'B\nC', 'b\nc'), 'a\r\nB\r\nC\r\nd');
+  assert.strictEqual(replaceLines(t, 2, 3, 'B', 'changed'), null);
+});

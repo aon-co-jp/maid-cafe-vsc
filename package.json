@@ -1,52 +1,171 @@
-﻿{
+{
   "name": "maid-cafe-vsc",
   "displayName": "Maid Cafe Code Helper",
   "description": "Pick a colour, mark code ranges with the mouse or cursor, and ask AI (aruaru-llm + aruaru-search, ChatGPT, Gemini, DeepSeek, Grok, Claude) about them. Includes maid-cafe.tokyo Q&A and the programming school.",
   "version": "0.1.0",
   "publisher": "aon-co-jp",
   "license": "MIT",
-  "engines": { "vscode": "^1.85.0" },
-  "categories": ["Education", "Machine Learning", "Other"],
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Education",
+    "Machine Learning",
+    "Other"
+  ],
   "main": "./out/extension.js",
   "activationEvents": [],
   "scripts": {
     "compile": "tsc -p .",
-    "test": "tsc -p . && node --test test/core.test.js"
+    "test": "tsc -p . && node --test test/core.test.js",
+    "test:vscode": "tsc -p . && node test/vscode/runTest.js"
   },
   "contributes": {
     "commands": [
-      { "command": "maidCafe.paintSelection", "title": "Maid Cafe: Mark selection with a colour" },
-      { "command": "maidCafe.askAboutColor", "title": "Maid Cafe: Ask AI about a colour's ranges" },
-      { "command": "maidCafe.askSelection", "title": "Maid Cafe: Ask AI about the selection" },
-      { "command": "maidCafe.clearColors", "title": "Maid Cafe: Clear colour marks" },
-      { "command": "maidCafe.setApiKey", "title": "Maid Cafe: Set an AI provider API key" },
-      { "command": "maidCafe.selectProvider", "title": "Maid Cafe: Choose the AI provider" },
-      { "command": "maidCafe.openQA", "title": "Maid Cafe: Open maid-cafe.tokyo Q&A" },
-      { "command": "maidCafe.openSchool", "title": "Maid Cafe: Open the programming school" }
+      {
+        "command": "maidCafe.paintSelection",
+        "title": "Maid Cafe: Mark selection with a colour"
+      },
+      {
+        "command": "maidCafe.askAboutColor",
+        "title": "Maid Cafe: Ask AI about a colour's ranges"
+      },
+      {
+        "command": "maidCafe.askSelection",
+        "title": "Maid Cafe: Ask AI about the selection"
+      },
+      {
+        "command": "maidCafe.followUp",
+        "title": "Maid Cafe: Ask a follow-up question"
+      },
+      {
+        "command": "maidCafe.explain",
+        "title": "Maid Cafe: Explain the selection"
+      },
+      {
+        "command": "maidCafe.fix",
+        "title": "Maid Cafe: Fix the selection (show diff, then apply)"
+      },
+      {
+        "command": "maidCafe.writeTests",
+        "title": "Maid Cafe: Write tests for the selection"
+      },
+      {
+        "command": "maidCafe.clearColors",
+        "title": "Maid Cafe: Clear colour marks"
+      },
+      {
+        "command": "maidCafe.setApiKey",
+        "title": "Maid Cafe: Set an AI provider API key"
+      },
+      {
+        "command": "maidCafe.selectProvider",
+        "title": "Maid Cafe: Choose the AI provider"
+      },
+      {
+        "command": "maidCafe.openQA",
+        "title": "Maid Cafe: Open maid-cafe.tokyo Q&A"
+      },
+      {
+        "command": "maidCafe.openSchool",
+        "title": "Maid Cafe: Open the programming school"
+      }
     ],
     "menus": {
       "editor/context": [
-        { "command": "maidCafe.paintSelection", "when": "editorHasSelection", "group": "maidCafe@1" },
-        { "command": "maidCafe.askSelection", "when": "editorHasSelection", "group": "maidCafe@2" },
-        { "command": "maidCafe.askAboutColor", "group": "maidCafe@3" }
+        {
+          "command": "maidCafe.paintSelection",
+          "when": "editorHasSelection",
+          "group": "maidCafe@1"
+        },
+        {
+          "command": "maidCafe.askSelection",
+          "when": "editorHasSelection",
+          "group": "maidCafe@2"
+        },
+        {
+          "command": "maidCafe.explain",
+          "when": "editorHasSelection",
+          "group": "maidCafe@3"
+        },
+        {
+          "command": "maidCafe.fix",
+          "when": "editorHasSelection",
+          "group": "maidCafe@4"
+        },
+        {
+          "command": "maidCafe.writeTests",
+          "when": "editorHasSelection",
+          "group": "maidCafe@5"
+        },
+        {
+          "command": "maidCafe.askAboutColor",
+          "group": "maidCafe@6"
+        }
       ]
     },
     "keybindings": [
-      { "command": "maidCafe.paintSelection", "key": "ctrl+alt+m", "when": "editorHasSelection" },
-      { "command": "maidCafe.askSelection", "key": "ctrl+alt+q", "when": "editorHasSelection" }
+      {
+        "command": "maidCafe.paintSelection",
+        "key": "ctrl+alt+m",
+        "when": "editorHasSelection"
+      },
+      {
+        "command": "maidCafe.askSelection",
+        "key": "ctrl+alt+q",
+        "when": "editorHasSelection"
+      }
     ],
     "configuration": {
       "title": "Maid Cafe Code Helper",
       "properties": {
-        "maidCafe.provider": { "type": "string", "default": "aruaru", "enum": ["aruaru", "openai", "gemini", "deepseek", "grok", "claude"], "description": "AI provider. aruaru = aruaru-search + aruaru-llm (free)." },
-        "maidCafe.models": { "type": "object", "default": {}, "description": "Model id per provider, e.g. {\"openai\": \"gpt-5\"}. Empty = built-in default." },
-        "maidCafe.aruaruUrl": { "type": "string", "default": "https://maid-cafe.tokyo", "description": "Base URL of the free aruaru-llm / aruaru-search service (Connect calls)." },
-        "maidCafe.redactSecrets": { "type": "boolean", "default": true, "description": "Mask keys, tokens and passwords in code before it is sent." },
-        "maidCafe.confirmBeforeSend": { "type": "boolean", "default": true, "description": "Show what will be sent and ask before every request." },
-        "maidCafe.maxContextChars": { "type": "number", "default": 12000, "description": "Maximum characters of code sent per request." }
+        "maidCafe.provider": {
+          "type": "string",
+          "default": "aruaru",
+          "enum": [
+            "aruaru",
+            "openai",
+            "gemini",
+            "deepseek",
+            "grok",
+            "claude"
+          ],
+          "description": "AI provider. aruaru = aruaru-search + aruaru-llm (free)."
+        },
+        "maidCafe.models": {
+          "type": "object",
+          "default": {},
+          "description": "Model id per provider, e.g. {\"openai\": \"gpt-5\"}. Empty = built-in default."
+        },
+        "maidCafe.aruaruUrl": {
+          "type": "string",
+          "default": "https://maid-cafe.tokyo",
+          "description": "Base URL of the free aruaru-llm / aruaru-search service (Connect calls)."
+        },
+        "maidCafe.redactSecrets": {
+          "type": "boolean",
+          "default": true,
+          "description": "Mask keys, tokens and passwords in code before it is sent."
+        },
+        "maidCafe.confirmBeforeSend": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show what will be sent and ask before every request."
+        },
+        "maidCafe.maxContextChars": {
+          "type": "number",
+          "default": 12000,
+          "description": "Maximum characters of code sent per request."
+        }
       }
     }
   },
-  "devDependencies": { "@types/node": "^22.0.0", "@types/vscode": "^1.85.0", "typescript": "^5.6.0" }
+  "devDependencies": {
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/test-electron": "^2.5.2",
+    "mocha": "^12.0.3",
+    "typescript": "^5.6.0"
+  }
 }
-
