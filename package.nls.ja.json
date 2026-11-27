@@ -1,4 +1,6 @@
 {
+  "cmd.aiLogin": "Maid Cafe: 無料AIにログイン(メールのワンタイムパスワード)",
+  "cmd.aiLogout": "Maid Cafe: 無料AIからログアウト",
   "cmd.paintSelection": "Maid Cafe: 選択範囲に色をつける",
   "cmd.askAboutColor": "Maid Cafe: 色つき範囲についてAIに質問",
   "cmd.askSelection": "Maid Cafe: 選択範囲についてAIに質問",

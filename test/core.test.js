@@ -47,7 +47,8 @@ test('request shapes per provider', () => {
   assert.ok(!g.url.includes('KEY'), 'key must not be in the URL');
   assert.strictEqual(g.headers['x-goog-api-key'], 'KEY');
   const ar = buildRequest({ ...a, provider: 'aruaru', aruaruUrl: 'https://example.test/' });
-  assert.strictEqual(ar.url, 'https://example.test/aruaru_llm.Llm/Generate');
+  assert.strictEqual(ar.url, 'https://example.test/openenglish.AiGate/Generate');
+  assert.strictEqual(buildRequest({ ...a, provider: 'aruaru', aruaruUrl: 'http://127.0.0.1:4600' }).url, 'http://127.0.0.1:4600/aruaru_llm.Llm/Generate');
   assert.ok(!('authorization' in ar.headers));
   for (const p of ['deepseek', 'grok']) assert.ok(buildRequest({ ...a, provider: p }).url.startsWith('https://api.'));
 });
@@ -117,7 +118,7 @@ test('translate: languages, code-preserving split, request shapes, poor-output c
   assert.strictEqual(await T.translateKeepingCode('A', async () => undefined), undefined);
   const fr = T.findLanguage('fr');
   const free = T.buildTranslateRequest({ provider: 'aruaru', text: 'hi', target: fr });
-  assert.ok(free.url.endsWith('/aruaru_llm.Llm/Translate') && JSON.parse(free.body).target_lang === 'fr');
+  assert.ok(free.url === 'https://maid-cafe.tokyo/openenglish.AiGate/Translate' && JSON.parse(free.body).target_lang === 'fr');
   assert.strictEqual(T.parseTranslateResponse('aruaru', { translation: 'salut' }), 'salut');
   assert.strictEqual(T.parseTranslateResponse('aruaru', { translation: 'junk', engine: 'gpt2-greedy-decode-v0' }), null);
   const paid = T.buildTranslateRequest({ provider: 'claude', key: 'K', text: 'hi', target: fr });
@@ -194,7 +195,7 @@ test('encodePng writes valid IHDR and filtered rows', () => {
 
 test('OCR request is versionless Connect and response is parsed', () => {
   const r = buildOcrRequest('http://x/', [{ mime: 'image/png', data: Buffer.from('ab') }]);
-  assert.strictEqual(r.url, 'http://x/aruaru_llm.Llm/Ocr');
+  assert.strictEqual(r.url, 'http://x/openenglish.AiGate/Ocr');
   assert.ok(!r.url.includes('.v1'));
   assert.deepStrictEqual(JSON.parse(r.body).images_base64, ['YWI=']);
   assert.strictEqual(parseOcrResponse({ pages: [{ lines: [{ text: 'a' }, { text: 'b' }] }, { lines: [{ text: 'c' }] }] }), 'a\nb\n\nc');
@@ -262,4 +263,18 @@ test('survey: level-based instruction and safe parsing', () => {
   assert.deepStrictEqual(sv.parseSurvey(JSON.stringify({ techs: ['go'], levels: { go: 'advanced', x: 'god' } })).levels, { go: 'advanced' });
   assert.strictEqual(sv.parseSurvey('{bad'), undefined);
   assert.deepStrictEqual(sv.LEVELS.map((l) => l.ja), ['超初心者', '初心者', '中級者', '上級者', 'ベテラン']);
+});
+
+// --- 無料AIの門(maid-cafe.tokyo のログイン必須の入口、2026-11-27)---
+test('aigate: local goes direct, remote goes through the login gate', () => {
+  const G = require('../out/core/aigate');
+  assert.strictEqual(G.aiMethodUrl(undefined, 'Translate'), 'https://maid-cafe.tokyo/openenglish.AiGate/Translate');
+  assert.strictEqual(G.aiMethodUrl('http://localhost:4600/', 'Ocr'), 'http://localhost:4600/aruaru_llm.Llm/Ocr');
+  assert.ok(G.isGateUrl('https://maid-cafe.tokyo/openenglish.AiGate/Generate'));
+  assert.ok(!G.isGateUrl('http://127.0.0.1:4600/aruaru_llm.Llm/Generate'));
+  assert.deepStrictEqual(G.gateLoginUrls('https://h.test/openenglish.AiGate/Ocr'), { requestOtp: 'https://h.test/openenglish.AiGate/RequestOtp', verifyOtp: 'https://h.test/openenglish.AiGate/VerifyOtp' });
+  assert.ok(G.busyMessage('30').includes('30 seconds'));
+  assert.ok(G.looksLikeEmail('a@b.jp') && !G.looksLikeEmail('nope'));
+  assert.ok(explainError(401, '', 'aruaru').includes('Log in'));
+  assert.ok(explainError(503, '', 'aruaru').includes('busy'));
 });

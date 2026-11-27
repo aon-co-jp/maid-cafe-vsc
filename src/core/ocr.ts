@@ -4,6 +4,7 @@
  * aruaru-llm の版なし Connect 呼び出し `POST /aruaru_llm.Llm/Ocr` に送る(新しい REST は作らない)。
  * PDF を描画して画像にする機能は持たない(文字や図形だけで描かれたページは対象外)。
  */
+import { aiMethodUrl } from './aigate';
 import * as zlib from 'node:zlib';
 
 export interface PdfImage {
@@ -99,9 +100,8 @@ export function encodePng(w: number, h: number, ch: 1 | 3 | number, px: Buffer):
 
 /** aruaru-llm の OCR(版なし Connect)の要求を作る。 */
 export function buildOcrRequest(baseUrl: string | undefined, images: PdfImage[]): { url: string; body: string } {
-  const base = (baseUrl ?? 'https://maid-cafe.tokyo').replace(/\/+$/, '');
   return {
-    url: `${base}/aruaru_llm.Llm/Ocr`,
+    url: aiMethodUrl(baseUrl, 'Ocr'),
     body: JSON.stringify({ images_base64: images.slice(0, MAX_OCR_PAGES).map((i) => i.data.toString('base64')), languages: 'jpn+eng', quality: 'best' }),
   };
 }

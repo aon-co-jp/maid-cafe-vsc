@@ -1,5 +1,6 @@
 /** 各AIへの要求の組み立てと、応答の取り出し。通信そのものはしない(試験しやすいように純粋関数にしてある)。 */
 import { Turn, flattenTurns } from './chat';
+import { aiMethodUrl } from './aigate';
 export type ProviderId = 'aruaru' | 'openai' | 'gemini' | 'deepseek' | 'grok' | 'claude';
 
 export const PROVIDERS: { id: ProviderId; label: string; free: boolean; needsKey: boolean; model: string }[] = [
@@ -45,9 +46,8 @@ export function buildRequest(a: BuildArgs): Req {
   const json = { 'content-type': 'application/json' };
   if (a.provider === 'aruaru') {
     // 版なしの Connect 呼び出し(REST は使わない)。1 つの文字列にまとめて送る。
-    const base = (a.aruaruUrl ?? 'https://maid-cafe.tokyo').replace(/\/+$/, '');
     return {
-      url: `${base}/aruaru_llm.Llm/Generate`,
+      url: aiMethodUrl(a.aruaruUrl, 'Generate'),
       headers: { ...json, 'x-tenant': 'maid-cafe-vsc' },
       // 応答は `completion`(ソース確認済み)。生成の上限は 128 トークン。
       body: JSON.stringify({ prompt: flattenTurns(a.system, a.history ?? [], a.user), max_new_tokens: Math.min(max, 128), tenant: 'maid-cafe-vsc' }),
@@ -97,6 +97,8 @@ export function explainError(status: number, body: string, provider?: ProviderId
   // 2026-11-27 実測: 既定の https://maid-cafe.tokyo は aruaru-llm を公開しておらず、版なし Connect は 404 になる。
   if (provider === 'aruaru' && status === 404)
     return 'The free AI server URL (maidCafe.aruaruUrl) does not expose aruaru-llm (404). Set maidCafe.aruaruUrl to a server that serves /aruaru_llm.Llm/*, or switch to Claude/Gemini/OpenAI with your own key.';
+  if (provider === 'aruaru' && status === 401) return 'Login is required for the free AI (e-mail one-time password). Run "Maid Cafe: Log in to the free AI" and try again. / 無料AIはメールのワンタイムパスワードでのログインが必要です。';
+  if (provider === 'aruaru' && status === 503) return 'The free AI server is busy (many users or low server memory). Please try again later. / 無料AIサーバーが混み合っています。しばらく待ってから再試行してください。';
   if (status === 401 || status === 403) return `Authentication failed (${status}). Check the API key.`;
   if (status === 429) return 'Rate limit or quota reached (429). Wait, or switch provider.';
   if (status >= 500) return `The provider had a problem (${status}). Try again later.`;

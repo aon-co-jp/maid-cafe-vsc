@@ -65,6 +65,14 @@
         "title": "%cmd.selectProvider%"
       },
       {
+        "command": "maidCafe.aiLogin",
+        "title": "%cmd.aiLogin%"
+      },
+      {
+        "command": "maidCafe.aiLogout",
+        "title": "%cmd.aiLogout%"
+      },
+      {
         "command": "maidCafe.openQA",
         "title": "%cmd.openQA%"
       },

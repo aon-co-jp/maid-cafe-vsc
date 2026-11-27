@@ -10,6 +10,53 @@ import { redact as redactSecrets } from './core/redact';
 import { ACTIONS, ActionId, extractCodeBlock, replaceLines } from './core/actions';
 import { buildPrompt } from './core/prompt';
 import { PROVIDERS, ProviderId, buildRequest, parseResponse, explainError } from './core/providers';
+import { isGateUrl, gateLoginUrls, busyMessage, looksLikeEmail, aiMethodUrl } from './core/aigate';
+
+// ── 無料AIの門(maid-cafe.tokyo)へのログイン(メールのワンタイムパスワード)。トークンは SecretStorage に保存。
+const GATE_TOKEN_KEY = 'maidCafe.aiGateToken';
+let gateCtx: vscode.ExtensionContext | undefined;
+
+async function gateLogin(url: string): Promise<string | undefined> {
+  if (!gateCtx) return undefined;
+  const { requestOtp, verifyOtp } = gateLoginUrls(url);
+  const email = await vscode.window.showInputBox({ prompt: 'Free AI login: your e-mail address (a one-time code will be sent) / 無料AIのログイン: メールアドレス', ignoreFocusOut: true, validateInput: (v) => (looksLikeEmail(v) ? undefined : 'Enter an e-mail address') });
+  if (!email) return undefined;
+  const h = { 'content-type': 'application/json' };
+  const r1 = await fetch(requestOtp, { method: 'POST', headers: h, body: JSON.stringify({ email: email.trim() }), signal: AbortSignal.timeout(30000) }).catch((e: Error) => e);
+  if (r1 instanceof Error || !r1.ok) {
+    vscode.window.showErrorMessage(`Could not send the login code: ${r1 instanceof Error ? r1.message : (await r1.text()).slice(0, 200)}`);
+    return undefined;
+  }
+  const code = await vscode.window.showInputBox({ prompt: `Enter the code sent to ${email.trim()} / 届いたコードを入力`, ignoreFocusOut: true, password: true });
+  if (!code) return undefined;
+  const r2 = await fetch(verifyOtp, { method: 'POST', headers: h, body: JSON.stringify({ email: email.trim(), code: code.trim() }), signal: AbortSignal.timeout(30000) }).catch((e: Error) => e);
+  if (r2 instanceof Error || !r2.ok) {
+    vscode.window.showErrorMessage(`Login failed: ${r2 instanceof Error ? r2.message : (await r2.text()).slice(0, 200)}`);
+    return undefined;
+  }
+  const token = ((await r2.json()) as { token?: string }).token;
+  if (!token) return undefined;
+  await gateCtx.secrets.store(GATE_TOKEN_KEY, token);
+  vscode.window.showInformationMessage('Logged in to the free AI. / 無料AIにログインしました。');
+  return token;
+}
+
+/** 門の URL なら Bearer を付け、401 ならログインして 1 回だけやり直す。503 は混雑の案内を出す。 */
+async function aiFetch(url: string | URL | Request, init: RequestInit = {}): Promise<Response> {
+  const u = String(url);
+  if (!isGateUrl(u)) return fetch(url, init);
+  const withToken = (t?: string) => ({ ...init, headers: { ...(init.headers as Record<string, string>), ...(t ? { authorization: `Bearer ${t}` } : {}) } });
+  let token = await gateCtx?.secrets.get(GATE_TOKEN_KEY);
+  let res = await fetch(u, withToken(token));
+  if (res.status === 401) {
+    if (token) await gateCtx?.secrets.delete(GATE_TOKEN_KEY);
+    token = await gateLogin(u);
+    if (token) res = await fetch(u, withToken(token));
+  }
+  if (res.status === 503) vscode.window.showWarningMessage(busyMessage(res.headers.get('retry-after')));
+  return res;
+}
+
 
 const store = new RangeStore();
 const decos = new Map<ColorId, vscode.TextEditorDecorationType>();
@@ -109,7 +156,7 @@ async function ask(ctx: vscode.ExtensionContext, ranges: MarkedRange[], question
   const req = buildRequest({ provider, key, model: models[provider], system: bp.system, user: followUp ? question : bp.user, aruaruUrl: cfg().get('aruaruUrl'), history: conversation.all() });
   return vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Asking ${provider}…` }, async () => {
     try {
-      const res = await fetch(req.url, { method: 'POST', headers: req.headers, body: req.body });
+      const res = await aiFetch(req.url, { method: 'POST', headers: req.headers, body: req.body });
       const text = await res.text();
       if (!res.ok) {
         vscode.window.showErrorMessage(explainError(res.status, text, provider));
@@ -211,7 +258,7 @@ async function callProvider(ctx: vscode.ExtensionContext, provider: ProviderId, 
   const models = cfg().get<Record<string, string>>('models', {});
   const req = buildRequest({ provider, key, model: models[provider], system, user, history, maxTokens, aruaruUrl: cfg().get('aruaruUrl') });
   try {
-    const res = await fetch(req.url, { method: 'POST', headers: req.headers, body: req.body, signal: AbortSignal.timeout(60000) });
+    const res = await aiFetch(req.url, { method: 'POST', headers: req.headers, body: req.body, signal: AbortSignal.timeout(60000) });
     const text = await res.text();
     if (!res.ok) {
       vscode.window.showErrorMessage(explainError(res.status, text, provider));
@@ -239,7 +286,7 @@ async function translateOne(ctx: vscode.ExtensionContext, text: string, target: 
     const models = cfg().get<Record<string, string>>('models', {});
     const req = buildTranslateRequest({ provider: p, key, model: models[p], aruaruUrl: cfg().get('aruaruUrl'), text, target });
     try {
-      const res = await fetch(req.url, { method: 'POST', headers: req.headers, body: req.body, signal: AbortSignal.timeout(60000) });
+      const res = await aiFetch(req.url, { method: 'POST', headers: req.headers, body: req.body, signal: AbortSignal.timeout(60000) });
       if (!res.ok) {
         if (p === 'aruaru' && res.status === 404 && !fallbackProvider()) vscode.window.showWarningMessage(explainError(404, '', 'aruaru'));
         return undefined;
@@ -379,7 +426,7 @@ async function readMaterial(name: string, bytes: Uint8Array): Promise<string | u
   }
   try {
     return await extractText(name, bytes, (images) => Promise.resolve(
-      vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Maid Cafe: reading ${images.length} scanned page(s) with OCR...` }, () => ocrImages(cfg().get<string>('aruaruUrl'), images))),
+      vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Maid Cafe: reading ${images.length} scanned page(s) with OCR...` }, () => ocrImages(cfg().get<string>('aruaruUrl'), images, aiFetch))),
     );
   } catch (e) {
     vscode.window.showWarningMessage('Could not read the file: ' + (e as Error).message);
@@ -668,6 +715,7 @@ async function runStage(ctx: vscode.ExtensionContext, a: StageArgs = {}): Promis
 
 export function activate(ctx: vscode.ExtensionContext): { store: RangeStore; lastAnswer: () => string | undefined } {
   const dropZone = new DropZoneController(ctx);
+  gateCtx = ctx;
   // 初回だけ、はじめてのガイドを開く(試験中は開かない)。
   if (ctx.extensionMode !== vscode.ExtensionMode.Test && !ctx.globalState.get('maidCafe.welcomed')) {
     void ctx.globalState.update('maidCafe.welcomed', true);
@@ -755,6 +803,14 @@ export function activate(ctx: vscode.ExtensionContext): { store: RangeStore; las
     vscode.commands.registerCommand('maidCafe.selectProvider', async () => {
       const p = await vscode.window.showQuickPick(PROVIDERS.map((x) => ({ label: x.label, description: x.free ? 'free' : 'your own contract', id: x.id })), { placeHolder: 'AI provider' });
       if (p) await cfg().update('provider', p.id, vscode.ConfigurationTarget.Global);
+    }),
+    vscode.commands.registerCommand('maidCafe.aiLogin', async () => {
+      await gateCtx?.secrets.delete(GATE_TOKEN_KEY);
+      await gateLogin(aiMethodUrl(cfg().get<string>('aruaruUrl'), 'Generate').replace(/Generate$/, 'Status'));
+    }),
+    vscode.commands.registerCommand('maidCafe.aiLogout', async () => {
+      await gateCtx?.secrets.delete(GATE_TOKEN_KEY);
+      vscode.window.showInformationMessage('Logged out of the free AI. / 無料AIからログアウトしました。');
     }),
     vscode.commands.registerCommand('maidCafe.openQA', () => vscode.env.openExternal(vscode.Uri.parse('https://maid-cafe.tokyo/'))),
     vscode.commands.registerCommand('maidCafe.openSchool', () => vscode.env.openExternal(vscode.Uri.parse('https://maid-cafe.tokyo/school/'))),

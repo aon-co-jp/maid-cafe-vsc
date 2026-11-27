@@ -1,5 +1,6 @@
 /** 第3言語の翻訳と、メイドカフェ英会話。VS Code に依存しない。 / Third-language translation and the maid-cafe English chat. */
 import { BuildArgs, Req, ProviderId, buildRequest, parseResponse } from './providers';
+import { aiMethodUrl } from './aigate';
 
 export interface Language {
   code: string; // ISO 639-1/-3(M2M100 が受け付ける)
@@ -99,9 +100,8 @@ export interface TranslateArgs {
 /** 翻訳の要求。無料(aruaru)は翻訳専用の Connect 呼び出し(M2M100、MIT)、有料は利用者の鍵で「ネイティブ並みに訳して」と頼む。 */
 export function buildTranslateRequest(a: TranslateArgs): Req {
   if (a.provider === 'aruaru') {
-    const base = (a.aruaruUrl ?? 'https://maid-cafe.tokyo').replace(/\/+$/, '');
     return {
-      url: `${base}/aruaru_llm.Llm/Translate`,
+      url: aiMethodUrl(a.aruaruUrl, 'Translate'),
       headers: { 'content-type': 'application/json', 'x-tenant': 'maid-cafe-vsc' },
       body: JSON.stringify({ text: a.text, target_lang: a.target.code, source_lang: a.source?.code ?? null, tenant: 'maid-cafe-vsc' }),
     };

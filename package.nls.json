@@ -1,4 +1,6 @@
 {
+  "cmd.aiLogin": "Maid Cafe: Log in to the free AI (e-mail one-time code)",
+  "cmd.aiLogout": "Maid Cafe: Log out of the free AI",
   "cmd.paintSelection": "Maid Cafe: Mark selection with a colour",
   "cmd.askAboutColor": "Maid Cafe: Ask AI about a colour's ranges",
   "cmd.askSelection": "Maid Cafe: Ask AI about the selection",
